@@ -1,17 +1,29 @@
 # newsdesk2
 
-每日简报流水线的 Go + TypeScript 实现。
+每日简报流水线：四路数据源定时采集，交给大模型分析成报告，合成三语静态站。
 
-采集与调度用 Go，渲染与 Worker 用 TS。两半通过文件系统通信——这个缝在 Python 版里
-就已经存在（渲染侧只读 `reports/` 和 `state/`，完全不碰 `data/`），换语言只是顺着它切。
+**零第三方依赖。** Go 标准库跑完整条本地流水线，TS 只用于 Cloudflare Worker。
 
 ```
-Go   ──写──→  data/<源>/<日期>/     原始数据 + history.json
-              reports/<日期>/*.md    模型产出
-              state/*.json           调度状态 + 心跳
-TS   ──读──→  reports/ + state/
-     ──写──→  site/  site-public/
+Go  采集 ──→ data/<源>/<日期>/     原始数据 + 跨期比对
+    调度 ──→ 沙箱内跑模型 ──→ reports/<日期>/*.md
+    渲染 ──→ site/  site-public/   三语静态站 + Atom feed
+TS  Worker ──→ 对象存储前的边缘层：默认文档、缓存、错误页、定时自查
 ```
 
-参考实现：`itswl/newsdesk` 的 `python-reference` tag。方法论契约（`prompts/`）与
-踩过的坑（`AGENTS.md`）从那边原样带过来——它们跟语言无关，是这个项目最贵的部分。
+## 两个刻意的设计
+
+**Markdown 渲染器不放行原始 HTML。** 报告正文里混着别人写的文本（RSS 正文、仓库描述、
+热榜标题），而站点是公开的。常见做法是「渲染出 HTML 再用清洗库过一遍」——那是补丁。
+这里的渲染器从构造上就只输出自己生成的标签，源文本里的 `<` 一律转义，没有注入面可言。
+
+**配置只有一份解析器，重复键报错。** 不猜「取第一个还是最后一个」。
+
+## 目录
+
+```
+go/     整条本地流水线
+ts/     Cloudflare Worker
+prompts/    四个任务的分析契约——方法论的坑最终落在这里
+AGENTS.md   改动前必须知道的约束
+```
