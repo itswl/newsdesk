@@ -1,0 +1,44 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { allowed, contentType, normalize, ttlFor } from '../src/paths.ts';
+
+// 对象存储没有「默认文档」概念，访问 / 不会返回 index.html
+test('根路径补上默认文档', () => {
+  assert.equal(normalize('/'), '/index.html');
+  assert.equal(normalize(''), '/index.html');
+  assert.equal(normalize('/en/'), '/en/index.html');
+});
+
+test('白名单放行站点自己的产出', () => {
+  for (const p of ['/index.html', '/2026-09-17.html', '/feed.xml', '/status.json',
+                   '/en/2026-09-17.html', '/zh-TW/archive.html']) {
+    assert.ok(allowed(p), `${p} 应放行`);
+  }
+});
+
+test('白名单挡住目录遍历与桶里的其他前缀', () => {
+  for (const p of ['/../secrets.json', '/a/b/c.html', '/reports/2026-09-17/ai-news.md',
+                   '/index.php', '/.env', '/en/../../x.html', '/data/douban/list.json']) {
+    assert.ok(!allowed(p), `${p} 不该放行`);
+  }
+});
+
+// 只放行单层语言子目录，多层就是遍历
+test('语言子目录只允许一层', () => {
+  assert.ok(allowed('/en/a.html'));
+  assert.ok(!allowed('/en/sub/a.html'));
+});
+
+// feed 打错类型阅读器直接不认，而且不会有任何报错——只是订阅者再也收不到更新
+test('按扩展名给 content-type', () => {
+  assert.equal(contentType('feed.xml'), 'application/atom+xml; charset=utf-8');
+  assert.equal(contentType('status.json'), 'application/json; charset=utf-8');
+  assert.equal(contentType('index.html'), 'text/html; charset=utf-8');
+});
+
+// status.json 是给外部监控轮询的，缓存久了「陈旧」本身就被 CDN 藏起来了
+test('status.json 的缓存必须比别的短得多', () => {
+  assert.ok(ttlFor('status.json') <= 30);
+  assert.ok(ttlFor('status.json') < ttlFor('2026-09-17.html'));
+  assert.equal(ttlFor('en/status.json'), ttlFor('status.json'));
+});

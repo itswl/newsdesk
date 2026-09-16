@@ -1,0 +1,50 @@
+# 复制为 ts/wrangler.toml 并填入自己的值（wrangler.toml 已被 gitignore）。
+name = "newsdesk"
+main = "src/index.ts"
+compatibility_date = "2026-09-01"
+workers_dev = false
+
+[vars]
+OCI_REGION    = "us-phoenix-1"
+OCI_NAMESPACE = "你的-object-storage-namespace"   # newsdesk doctor 会打出来
+OCI_BUCKET    = "你的公开桶名"
+
+# 错误页上的语言入口跟着它走，要与 config.conf 的 SITE_LANGS 保持一致，
+# 否则 404 页会给出指向未发布语言的链接——那些链接本身就是 404。
+SITE_LANGS = "zh-CN,zh-TW,en"
+
+# 站点多久没更新算出事（小时）。相邻两档最长间隔 8.75h，夜里合盖次日补跑约 19h，
+# 26 不会误报又能在「整整一天没动静」时叫出来。
+STALE_ALERT_HOURS = "26"
+
+# 告警体。留空用 {"title":..,"text":..}；飞书/Lark、钉钉、Slack 形状各不相同。
+ALERT_PAYLOAD = "{\"msg_type\":\"text\",\"content\":{\"text\":\"{{TEXT}}\"}}"
+
+[[routes]]
+pattern   = "news.example.com/*"
+zone_name = "example.com"
+
+# ── 日志（Workers Logs / Observability）───────────────────────────────
+# 默认是关的，console.log 只有在 `wrangler tail` 实时挂着时才看得到。而这个
+# Worker 唯一会打日志的地方，恰好是「告警通道自己坏了」——webhook 被轮换、
+# 群被删，notify() 记一句然后没人看见，专为发现静默失效而设的那一层自己静默
+# 失效了。cron 每 6 小时一次，不可能正好挂着 tail 接住。
+#
+# 免费额度 200,000 事件/天，这个 Worker 一天约 150 次请求 + 4 次 cron，
+# 用掉不到 0.1%，采样率给满即可。
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# ── 定时自查 ───────────────────────────────────────────────────────────
+# 每 6 小时一次（UTC）。这是整套告警里唯一不在那台机器上的环节——本机的告警
+# 和日终核对都要调度器活着才发得出来，机器关了它们一起沉默。
+# 没有这条，status.json 只是「可以被外部监控」，不是「正在被监控」。
+#
+# 无状态：陈旧时每次都会报，关机三天大约 12 条。告警通道不该在真出事时反而安静。
+[triggers]
+crons = ["0 */6 * * *"]
+
+# ⚠️ ALERT_WEBHOOK 是能往群里发消息的凭据，不要写进这个文件。用 secret 注入：
+#   printf '%s' "$WEBHOOK" | npx wrangler secret put ALERT_WEBHOOK
+# 也不要用 `--var ALERT_WEBHOOK=...`：npm 会把整条命令行回显到终端与日志里。
