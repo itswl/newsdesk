@@ -88,3 +88,28 @@ func StripControl(b []byte) []byte {
 	}
 	return out
 }
+
+// GetWithHeaders 与 Get 相同，另外返回响应头（GitHub 的 Link 分页要用）。
+func (c *Client) GetWithHeaders(ctx context.Context, url string, headers map[string]string) ([]byte, http.Header, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	req.Header.Set("User-Agent", UA)
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 32<<20))
+	if err != nil {
+		return nil, resp.Header, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return body, resp.Header, fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet(body))
+	}
+	return body, resp.Header, nil
+}

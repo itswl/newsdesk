@@ -13,6 +13,7 @@ import (
 
 	"github.com/itswl/newsdesk2/internal/config"
 	"github.com/itswl/newsdesk2/internal/fetch"
+	"github.com/itswl/newsdesk2/internal/history"
 	"github.com/itswl/newsdesk2/internal/i18n"
 	"github.com/itswl/newsdesk2/internal/site"
 	"github.com/itswl/newsdesk2/internal/store"
@@ -21,6 +22,7 @@ import (
 const usage = `用法: newsdesk <命令> [参数]
 
   fetch <源>      采集。源: douban | momoyu | trending | ai
+  history <源>    跨期比对，产出 history.json
   site            渲染静态站（按 SITE_LANGS 生成各语言）
   langs           打印实际会发布哪些语言、被剔除的为什么
 
@@ -47,6 +49,13 @@ func main() {
 		runFetch(ctx, opts, cfg)
 	case "site":
 		runSite(opts, cfg)
+	case "history":
+		if len(opts.args) < 2 {
+			fatal("用法: newsdesk history <ainews|momoyu|douban|trending>")
+		}
+		if err := history.Build(store.New(opts.root), opts.args[1], opts.date); err != nil {
+			fatal("%v", err)
+		}
 	case "langs":
 		for _, l := range effectiveLangs(cfg) {
 			fmt.Println(l)
@@ -61,10 +70,12 @@ type globals struct {
 	args       []string
 	tag        string
 	n          int
+	tier       string
+	hours      int
 }
 
 func parseGlobals() globals {
-	g := globals{date: store.Today(), tag: "热门", n: 10}
+	g := globals{date: store.Today(), tag: "热门", n: 10, tier: "t3", hours: 36}
 	args := os.Args[1:]
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		k := strings.TrimLeft(args[0], "-")
@@ -81,6 +92,10 @@ func parseGlobals() globals {
 			g.tag = v
 		case "n":
 			fmt.Sscanf(v, "%d", &g.n)
+		case "tier":
+			g.tier = v
+		case "hours":
+			fmt.Sscanf(v, "%d", &g.hours)
 		default:
 			fatal("未知参数 -%s", k)
 		}
@@ -97,7 +112,7 @@ func parseGlobals() globals {
 	return g
 }
 
-func runFetch(ctx context.Context, g globals, _ *config.Config) {
+func runFetch(ctx context.Context, g globals, cfg *config.Config) {
 	if len(g.args) < 2 {
 		fatal("用法: newsdesk fetch <douban|momoyu|trending|ai>")
 	}
@@ -107,6 +122,13 @@ func runFetch(ctx context.Context, g globals, _ *config.Config) {
 	switch g.args[1] {
 	case "douban":
 		err = fetch.Douban(ctx, c, st, g.date, fetch.DoubanOpts{Tag: g.tag, N: g.n})
+	case "momoyu":
+		err = fetch.Momoyu(ctx, c, st)
+	case "trending":
+		gh := fetch.NewGitHub(c, cfg.Get("GITHUB_TOKEN", ""))
+		err = fetch.Trending(ctx, c, gh, st, g.date, g.tier)
+	case "ai":
+		err = fetch.AINews(ctx, c, st, g.date, fetch.AIOpts{Hours: g.hours})
 	default:
 		fatal("未知数据源 %q", g.args[1])
 	}
