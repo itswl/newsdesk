@@ -145,3 +145,6 @@ func Keys() []string {
 	}
 	return out
 }
+
+// HTMLLang <html lang="..."> 的取值。
+func HTMLLang(l Lang) string { return string(l) }
