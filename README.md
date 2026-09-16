@@ -98,7 +98,7 @@ npx wrangler deploy
 ## 开发
 
 ```bash
-make test     # Go 109 + TS 34
+make test     # Go 110 + TS 34
 make check    # 加上 fmt / vet / tsc
 ```
 

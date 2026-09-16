@@ -146,10 +146,19 @@ func cmdPublish(ctx context.Context, args []string) error {
 		return err
 	}
 	publicDir := ""
-	if !*skipBuild {
-		if _, publicDir, err = pipeline.Site(root, cfg, os.Stdout); err != nil {
-			return err
+	if *skipBuild {
+		// --no-build 直接发 site/ 会把整个历史都发出去：site/ 是全量的，
+		// 按窗口截断的那份在 state/publish 下。配了 PUBLIC_DAYS 却发全量，
+		// 等于悄悄把「只展示最近 N 天」这个承诺撤销了，而且不报错。
+		if cfg.Int("PUBLIC_DAYS", 0) > 0 {
+			publicDir = filepath.Join(root, "state", "publish")
+			if _, err := os.Stat(publicDir); err != nil {
+				return fmt.Errorf("配了 PUBLIC_DAYS 但 %s 不存在：--no-build 会把全量站点发出去。"+
+					"去掉 --no-build 重建一次", publicDir)
+			}
 		}
+	} else if _, publicDir, err = pipeline.Site(root, cfg, os.Stdout); err != nil {
+		return err
 	}
 	// 发布前必须自检。放到发布之后等于没有自检。
 	dirs := []string{filepath.Join(root, "site"), filepath.Join(root, "reports")}

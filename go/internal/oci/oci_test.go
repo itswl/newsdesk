@@ -11,6 +11,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -269,5 +270,47 @@ func TestPullSkipsIdenticalFiles(t *testing.T) {
 	}
 	if st.Skipped != 1 || st.Files != 0 || gets != 0 {
 		t.Fatalf("内容一致的文件不该重下：%+v（下载 %d 次）", st, gets)
+	}
+}
+
+// dry-run 要算出真的会传/会删哪些，不能只是「跳过这一步」。
+// 发布会删对象，看不到清单就敢按回车的话，删错了才发现就晚了。
+func TestSyncDryRunComputesDiffWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "new.html"), []byte("new"), 0o644)
+	os.WriteFile(filepath.Join(dir, "same.html"), []byte("same"), 0o644)
+
+	var wrote int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/o") {
+			json.NewEncoder(w).Encode(map[string]any{"objects": []Object{
+				{Name: "same.html", Size: 4, MD5: md5b64("same")},
+				{Name: "gone.html", Size: 1, MD5: md5b64("x")},
+			}})
+			return
+		}
+		wrote++
+	}))
+	defer srv.Close()
+
+	p, _ := testProfile(t)
+	p.Endpoint, p.Namespace = srv.URL, "ns"
+	var lines []string
+	st, err := New(p).Sync(context.Background(), dir, SyncOpts{
+		Bucket: "bk", Delete: true, DryRun: true,
+		Log: func(f string, a ...any) { lines = append(lines, fmt.Sprintf(f, a...)) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if wrote != 0 {
+		t.Fatalf("dry-run 动了远端 %d 次", wrote)
+	}
+	if st.Uploaded != 1 || st.Skipped != 1 || st.Deleted != 1 {
+		t.Fatalf("差异算错：%+v", st)
+	}
+	joined := strings.Join(lines, "\n")
+	if !strings.Contains(joined, "+ new.html") || !strings.Contains(joined, "- gone.html") {
+		t.Fatalf("清单要逐条列出来：\n%s", joined)
 	}
 }

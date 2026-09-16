@@ -66,19 +66,15 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			if _, err := os.Stat(dir); err != nil {
 				continue
 			}
-			if o.DryRun {
-				logf("  [dry-run] %s/ → %s:%s/", sub, backup, sub)
-				continue
-			}
 			st, err := c.Sync(ctx, dir, oci.SyncOpts{
-				Bucket: backup, Prefix: sub + "/", Delete: false, Log: logf,
+				Bucket: backup, Prefix: sub + "/", Delete: false, DryRun: o.DryRun, Log: logf,
 			})
 			if err != nil {
 				return res, fmt.Errorf("备份 %s: %w", sub, err)
 			}
 			merge(&res.Backup, st)
-			logf("  备份 %s/ → %s: 上传 %d、跳过 %d、失败 %d",
-				sub, backup, st.Uploaded, st.Skipped, st.Failed)
+			logf("  备份 %s/ → %s:%s 上传 %d、跳过 %d、失败 %d",
+				sub, backup, dryTag(o.DryRun), st.Uploaded, st.Skipped, st.Failed)
 		}
 	}
 
@@ -90,21 +86,17 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		if _, err := os.Stat(src); err != nil {
 			return res, fmt.Errorf("公开站点目录不存在: %s", src)
 		}
-		if o.DryRun {
-			logf("  [dry-run] %s → %s（含删除超窗对象）", src, public)
-		} else {
-			// Delete=true：窗口外的旧页面必须真删掉。只是不再放链接是不够的，
-			// 桶列不出清单但地址是能猜的（日期 + 任务名就是路径）。
-			st, err := c.Sync(ctx, src, oci.SyncOpts{
-				Bucket: public, Prefix: "", Delete: true, Log: logf,
-			})
-			if err != nil {
-				return res, fmt.Errorf("发布站点: %w", err)
-			}
-			res.Public = st
-			logf("  发布 site → %s: 上传 %d、跳过 %d、删除 %d、失败 %d",
-				public, st.Uploaded, st.Skipped, st.Deleted, st.Failed)
+		// Delete=true：窗口外的旧页面必须真删掉。只是不再放链接是不够的，
+		// 桶列不出清单但地址是能猜的（日期 + 任务名就是路径）。
+		st, err := c.Sync(ctx, src, oci.SyncOpts{
+			Bucket: public, Prefix: "", Delete: true, DryRun: o.DryRun, Log: logf,
+		})
+		if err != nil {
+			return res, fmt.Errorf("发布站点: %w", err)
 		}
+		res.Public = st
+		logf("  发布 site → %s:%s 上传 %d、跳过 %d、删除 %d、失败 %d",
+			public, dryTag(o.DryRun), st.Uploaded, st.Skipped, st.Deleted, st.Failed)
 	}
 
 	if n := res.Backup.Failed + res.Public.Failed; n > 0 {
@@ -112,6 +104,13 @@ func Run(ctx context.Context, o Options) (Result, error) {
 			strings.Join(append(res.Backup.Errs, res.Public.Errs...), "\n  "))
 	}
 	return res, nil
+}
+
+func dryTag(dry bool) string {
+	if dry {
+		return " [dry-run] 将"
+	}
+	return ""
 }
 
 func merge(dst *oci.SyncStat, s oci.SyncStat) {

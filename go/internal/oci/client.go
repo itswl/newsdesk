@@ -193,7 +193,10 @@ type SyncOpts struct {
 	Delete   bool                  // 远端多出来的对象是否删掉
 	Parallel int                   // 并发上传数
 	Keep     func(rel string) bool // 本地哪些文件要传，nil = 全传
-	Log      func(format string, a ...any)
+	// DryRun 只算差异不动远端。算的是真的要传/要删哪些，不是「跳过这一步」——
+	// 发布会删对象，看不到清单就敢按回车的话，删错了才发现就晚了。
+	DryRun bool
+	Log    func(format string, a ...any)
 }
 
 // Sync 把本地目录同步到桶里。
@@ -255,6 +258,20 @@ func (c *Client) Sync(ctx context.Context, dir string, o SyncOpts) (SyncStat, er
 		return st, fmt.Errorf("遍历 %s: %w", dir, err)
 	}
 
+	if o.DryRun {
+		for _, j := range jobs {
+			st.Uploaded++
+			logf("  + %s", j.rel)
+		}
+		for _, name := range staleOf(remote, local) {
+			if o.Delete {
+				st.Deleted++
+				logf("  - %s", name)
+			}
+		}
+		return st, nil
+	}
+
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	ch := make(chan job)
@@ -291,14 +308,7 @@ func (c *Client) Sync(ctx context.Context, dir string, o SyncOpts) (SyncStat, er
 	wg.Wait()
 
 	if o.Delete {
-		var gone []string
-		for name := range remote {
-			if !local[name] {
-				gone = append(gone, name)
-			}
-		}
-		sort.Strings(gone)
-		for _, name := range gone {
+		for _, name := range staleOf(remote, local) {
 			if err := c.Delete(ctx, o.Bucket, name); err != nil {
 				st.Failed++
 				if len(st.Errs) < 10 {
@@ -314,6 +324,18 @@ func (c *Client) Sync(ctx context.Context, dir string, o SyncOpts) (SyncStat, er
 }
 
 // Get 取回一个对象。
+// staleOf 远端有、本地没有的对象。
+func staleOf(remote map[string]Object, local map[string]bool) []string {
+	var gone []string
+	for name := range remote {
+		if !local[name] {
+			gone = append(gone, name)
+		}
+	}
+	sort.Strings(gone)
+	return gone
+}
+
 func (c *Client) Get(ctx context.Context, bucket, name string) ([]byte, error) {
 	ns, err := c.Namespace(ctx)
 	if err != nil {
