@@ -109,3 +109,13 @@ func (c *Config) Require(keys ...string) error {
 	}
 	return nil
 }
+
+// All 返回全部键值的一份拷贝。给发布前的凭据自检用——它需要知道「真实值
+// 长什么样」才能在产出里找它们。
+func (c *Config) All() map[string]string {
+	out := make(map[string]string, len(c.vals))
+	for k, v := range c.vals {
+		out[k] = v
+	}
+	return out
+}
