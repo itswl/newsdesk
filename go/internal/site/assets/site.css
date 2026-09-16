@@ -1,0 +1,254 @@
+/* 配色抽成变量，两套主题只差这一块。避免维护两份完整样式表然后慢慢漂移。
+   对比度有意压低：深色 #c9ced8/#16181d 约 9.5:1、浅色约 10:1，都远高于
+   WCAG AA 的 4.5:1，但比纯白纯黑柔和——这些报告动辄几千字，要能久看。 */
+:root{
+  --bg:#16181d; --bg2:#1b1e25; --bg3:#232730; --bg4:#20242c; --bg5:#1a1d24;
+  --fg:#c9ced8; --fg2:#8f96a3; --fg3:#666d79; --fgh:#eef1f6; --fgh2:#aeb6c2;
+  --bd:#272b34; --bd2:#2f343e; --bd3:#262a33;
+  --link:#6ba4ff; --accent:#3b7bf0; --code:#e0a373;
+  --stripe:#1a1d23; --quote-bd:#3c4250;
+  --ok-fg:#74c894; --ok-bd:#2b4b36;
+  --bad-fg:#f09b9b; --bad-bd:#6e3131; --bad-bg:#2a1a1a;
+  --warn-fg:#d4bd7e; --warn-bd:#5f5329; --warn-bg:#2e2a1b;
+  --chip-fg:#93b8ef; --chip-bg:#1d2a41; --chip-bd:#2b4166;
+  --alert-bg:#2a1a1a; --alert-bd:#6e3131;
+  --fade:22,24,29;
+  color-scheme:dark;
+}
+html[data-theme=light]{
+  --bg:#fcfcfb; --bg2:#f5f5f3; --bg3:#fff; --bg4:#f1f1ee; --bg5:#f7f7f5;
+  --fg:#3a3f47; --fg2:#6b7280; --fg3:#949aa3; --fgh:#1d2126; --fgh2:#454b54;
+  --bd:#e8e7e3; --bd2:#dcdbd6; --bd3:#e4e3df;
+  --link:#2563c7; --accent:#3b7bf0; --code:#9a5416;
+  --stripe:#faf9f7; --quote-bd:#d5d4cf;
+  --ok-fg:#1f7a45; --ok-bd:#bcdfc8;
+  --bad-fg:#c02626; --bad-bd:#f0c2c2; --bad-bg:#fdefef;
+  --warn-fg:#8a6108; --warn-bd:#e8d5a4; --warn-bg:#fdf7e8;
+  --chip-fg:#1f5aa8; --chip-bg:#eaf1fc; --chip-bd:#c6d9f5;
+  --alert-bg:#fdefef; --alert-bd:#f0c2c2;
+  --fade:252,252,251;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:light){
+  html:not([data-theme]){
+    --bg:#fcfcfb; --bg2:#f5f5f3; --bg3:#fff; --bg4:#f1f1ee; --bg5:#f7f7f5;
+    --fg:#3a3f47; --fg2:#6b7280; --fg3:#949aa3; --fgh:#1d2126; --fgh2:#454b54;
+    --bd:#e8e7e3; --bd2:#dcdbd6; --bd3:#e4e3df;
+    --link:#2563c7; --code:#9a5416;
+    --stripe:#faf9f7; --quote-bd:#d5d4cf;
+    --ok-fg:#1f7a45; --ok-bd:#bcdfc8;
+    --bad-fg:#c02626; --bad-bd:#f0c2c2; --bad-bg:#fdefef;
+    --warn-fg:#8a6108; --warn-bd:#e8d5a4; --warn-bg:#fdf7e8;
+    --chip-fg:#1f5aa8; --chip-bg:#eaf1fc; --chip-bd:#c6d9f5;
+    --alert-bg:#fdefef; --alert-bd:#f0c2c2;
+    --fade:252,252,251;
+    color-scheme:light;
+  }
+}
+
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
+  font:16.5px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
+       "Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
+  letter-spacing:.01em;-webkit-font-smoothing:antialiased}
+
+/* 表头随内容滚走，只留 Tab 条吸顶——Tab 是唯一高频操作，日期导航和状态条
+   看一眼就够，常驻会在手机上白占四分之一屏。 */
+header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px}
+.tabbar{position:sticky;top:0;z-index:9;background:var(--bg2);
+  border-bottom:1px solid var(--bd);padding:9px 24px}
+.bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
+  max-width:860px;margin:0 auto 10px}
+h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:.02em}
+.nav{display:flex;align-items:center;gap:6px;margin-left:auto}
+.nav a,.nav span.dis,.nav button.tg{display:inline-block;padding:6px 12px;border-radius:7px;
+  font-size:13px;border:1px solid transparent;background:var(--bg3);color:var(--fg2);
+  text-decoration:none;font-family:inherit;cursor:pointer;transition:background .15s}
+.nav a:hover,.nav button.tg:hover{background:var(--bg4);color:var(--fgh2);text-decoration:none}
+.nav span.dis{opacity:.4}
+.nav a em{font-style:normal}
+.nav select{background:var(--bg3);color:var(--fg2);border:1px solid transparent;border-radius:7px;
+  padding:6px 10px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
+.nav a.all{color:var(--link)}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:860px;margin:0 auto}
+.tab{background:transparent;color:var(--fg2);border:1px solid transparent;border-radius:8px;
+  padding:7px 14px;font-size:14.5px;cursor:pointer;font-family:inherit;transition:background .15s}
+.tab:hover{background:var(--bg3);color:var(--fgh2)}
+.tab.on{background:var(--accent);color:#fff}
+.tab em{font-style:normal;font-size:11px;opacity:.85;background:rgba(255,255,255,.2);
+  padding:1px 6px;border-radius:5px;margin-left:6px}
+.tab.absent{opacity:.3;cursor:not-allowed;text-decoration:line-through}
+
+/* 正文宽度 760px——中文 16.5px 下约 42 字一行。原来 1000px 是 66 字，
+   眼睛每行都要横扫一遍，长文读着累。表格允许在此基础上横向滚。 */
+main{max-width:760px;margin:0 auto;padding:44px 24px 96px}
+.pane{display:none}.pane.on{display:block}
+.src{color:var(--fg3);font-size:12px;margin-bottom:34px;font-family:ui-monospace,Menlo,monospace}
+
+h1{font-size:27px;line-height:1.45;margin:0 0 26px;color:var(--fgh);font-weight:650;letter-spacing:0}
+h2{font-size:20px;line-height:1.5;margin:52px 0 16px;color:var(--fgh);font-weight:650;letter-spacing:0}
+h3{font-size:17px;line-height:1.6;margin:34px 0 10px;color:var(--fgh2);font-weight:600}
+h4{font-size:16px;margin:26px 0 8px;color:var(--fg2);font-weight:600}
+p{margin:17px 0}
+a{color:var(--link);text-decoration:none;border-bottom:1px solid transparent;transition:border-color .15s}
+a:hover{border-bottom-color:var(--link);text-decoration:none}
+
+/* 行内代码不再给方框，只用色相区分——满屏小方块是视觉噪声的主要来源 */
+code{font-size:.9em;color:var(--code);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+  letter-spacing:0;word-break:break-word}
+pre{background:var(--bg5);padding:16px 18px;border-radius:10px;overflow-x:auto;
+  border:1px solid var(--bd3);font-size:13.5px;line-height:1.7}
+pre code{color:var(--fg)}
+
+/* 引用块去掉背景与圆角，只留一道竖线——它在报告里承担「口径说明」，
+   不该比正文更抢眼 */
+blockquote{margin:24px 0;padding:2px 0 2px 20px;border-left:2px solid var(--quote-bd);
+  color:var(--fg2);font-size:15.5px}
+blockquote p{margin:9px 0}
+
+.tw{position:relative;margin:28px 0}
+.tw::after{content:"";position:absolute;top:0;right:0;width:28px;height:100%;
+  background:linear-gradient(90deg,rgba(var(--fade),0),rgba(var(--fade),.95));
+  pointer-events:none;opacity:0;transition:opacity .2s}
+.tw.more::after{opacity:1}
+.tw>div{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* 表格只留横线，去掉竖线和单元格边框——报告表格很密，四边框会让整块变成网格噪声 */
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
+th,td{border:0;border-bottom:1px solid var(--bd3);padding:10px 14px 10px 0;
+  text-align:left;vertical-align:top}
+th{color:var(--fg2);font-weight:600;white-space:nowrap;font-size:13px;
+  letter-spacing:.03em;border-bottom:1px solid var(--bd2)}
+tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--stripe)}
+
+strong{color:var(--fgh);font-weight:650}
+ul,ol{padding-left:22px;margin:17px 0}
+li{margin:8px 0}
+li::marker{color:var(--fg3)}
+hr{border:0;border-top:1px solid var(--bd);margin:44px 0}
+em{color:var(--fg2);font-style:normal}
+
+.arch td.d{white-space:nowrap;font-family:ui-monospace,Menlo,monospace}
+.arch tr.mh td{background:var(--bg4);color:var(--fgh2);font-weight:600;
+  font-family:ui-monospace,Menlo,monospace;padding:8px 12px;position:sticky;top:0}
+.arch tr.mh span{font-weight:400;color:var(--fg3);font-size:12px}
+.arch .chip{margin:1px 5px 1px 0;white-space:nowrap}
+.arch td{padding:8px 10px}
+.arch td.d{width:1%}
+.arch .new{margin-left:6px;padding:1px 6px}
+.chip{display:inline-block;padding:2px 9px;border-radius:6px;font-size:12px;margin-right:5px;
+  border:1px solid var(--bd2);background:transparent;color:var(--fg3)}
+.chip.has{background:var(--chip-bg);border-color:transparent;color:var(--chip-fg)}
+.chip.draft{background:var(--warn-bg);border-color:transparent;color:var(--warn-fg)}
+.new{margin-left:9px;font-size:11px;font-weight:600;vertical-align:2px;
+  padding:2px 8px;border-radius:6px;background:var(--chip-bg);color:var(--chip-fg)}
+.status{display:flex;gap:7px;flex-wrap:wrap;max-width:860px;margin:0 auto}
+.status.alert{padding:8px 11px;border-radius:8px;background:var(--alert-bg);
+  border:1px solid var(--alert-bd)}
+.st{font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--bd2);
+  background:transparent;color:var(--fg3)}
+.st[title]{cursor:help}
+.st.ok{color:var(--ok-fg);border-color:var(--ok-bd)}
+.st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
+.st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
+.st.pend{opacity:.55}
+.st .m{font-style:normal;margin-right:5px}
+/* 语言切换：跟日期导航同一行，低调但点得到。当前语言不是链接，避免自己链自己 */
+/* ── 英文排版覆盖 ────────────────────────────────────────────────────
+   上面那套 16.5px/1.9 + .01em 字距是按中文调的：CJK 方块字需要更大的行距与
+   一点字距才透气。原样套在拉丁文字上有三个问题，实测都量过：
+
+     一行 107 字符   760px 下英文塞得进 107 个字符，中文只有 69。舒适区间是
+                     66-80，超过之后眼睛回到下一行会找不着位置。
+     行高 1.9        英文的标准区间是 1.5-1.7，1.9 会让行与行散开、段落不成块。
+     字距 .01em      拉丁字体本身已经调过字偶距，再加只会更松。
+
+   只收窄段落与列表，表格保持 760px——trending 报告有 11 列，收窄它得不偿失。
+   用 em 而不是 px：随字号自动缩放，改字号时不用重新算字符数。 */
+html[lang="en"] body{line-height:1.68;letter-spacing:normal}
+html[lang="en"] .pane p,
+html[lang="en"] .pane li,
+html[lang="en"] .pane blockquote{max-width:34em}
+html[lang="en"] h1{letter-spacing:-.01em}
+html[lang="en"] h2,html[lang="en"] h3{letter-spacing:-.005em}
+/* 状态条：英文标签更宽，四个 chip 在 375px 上要占掉 85% 的行宽。
+   收紧勾号与文字之间的空隙和左右内边距，把它压回和中文相当的比例。 */
+html[lang="en"] .st{letter-spacing:normal;padding-left:9px;padding-right:9px}
+html[lang="en"] .st .m{margin-right:3px}
+
+/* 语言切换：一个框里三段，不是三个独立按钮。除了视觉上是一个整体，也更窄——
+   省掉了三份外边距与按钮之间的间隙。当前语言不是链接，避免自己链自己。 */
+.lang{display:inline-flex;align-items:stretch;margin-left:4px;
+  border:1px solid var(--bd2);border-radius:7px;overflow:hidden;background:var(--bg2)}
+.lang i{display:none;font-style:normal}          /* 缩写，窄屏才出来 */
+.lang a,.lang span{display:flex;align-items:center;padding:5px 9px;font-size:12.5px;
+  line-height:1;color:var(--fg3);white-space:nowrap;border-left:1px solid var(--bd2)}
+.lang a:first-child,.lang span:first-child{border-left:0}
+.lang a:hover{background:var(--bg3);color:var(--fg)}
+.lang span.on{color:var(--fgh);background:var(--bg4);font-weight:600}
+.keep{margin:0 0 20px;padding:9px 13px;border-left:2px solid var(--quote-bd);
+  background:var(--bg5);color:var(--fg2);font-size:13.5px;line-height:1.7;border-radius:0 4px 4px 0}
+footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
+footer.dis{margin-top:72px;padding-top:22px;border-top:1px solid var(--bd);
+  color:var(--fg3);font-size:12.5px;line-height:1.95}
+footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
+
+@media (max-width:640px){
+  body{font-size:16px;line-height:1.85}
+  header{padding:12px 16px}
+  .tabbar{padding:8px 16px}
+  .bar{gap:9px;margin-bottom:9px}
+  h1.site{font-size:14.5px;width:100%}
+  h1.site span{display:block;margin:2px 0 0;font-size:11px}
+  .nav{margin-left:0;width:100%;gap:6px;flex-wrap:wrap;row-gap:7px}
+  /* 语言块按自然宽度、不参与等分，否则它会把日期下拉挤没（实测挤到 14px）。
+     窄屏换成缩写：简/繁/EN 约 66px，完整标签要 142px。 */
+  .lang{margin-left:0;flex:0 0 auto;order:9;align-self:stretch}
+  .lang b{display:none}
+  .lang i{display:inline}
+  .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;
+    font-size:13px;min-height:38px;white-space:nowrap;display:flex;align-items:center;
+    justify-content:center}
+  /* min-width 不能给 0：flex 会把它一路压到看不见。88px 刚好放下 09-16 加箭头 */
+  .nav select{flex:1.4 1 88px;min-width:88px}
+  .nav a.all,.nav button.tg{flex:0 0 auto;padding:9px 12px}
+  /* 「全部 N 天」在窄屏是冗余的：日期下拉最后一项就是去归档。
+     省下它约 56px，导航才挤得进一行——两行会让 header 从 133 涨到 178px。 */
+  .nav a.all{display:none}
+  .tabs{gap:4px}
+  .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:38px}
+  .tab em{display:none}
+  main{padding:28px 16px 64px;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  .src{font-size:11px;margin-bottom:24px}
+  h1{font-size:22px;margin-bottom:20px}
+  h2{font-size:18px;margin:38px 0 13px}
+  h3{font-size:16px;margin:26px 0 9px}
+  p{margin:15px 0}
+  table{font-size:13px}
+  th,td{padding:8px 10px 8px 0}
+  blockquote{margin:20px 0;padding-left:15px;font-size:15px}
+  pre{padding:12px;font-size:12.5px}
+  ul,ol{padding-left:19px}
+  .status{gap:5px}
+  .st{font-size:11px;padding:2px 8px}
+  footer.dis{margin-top:52px;font-size:12px}
+}
+@media (max-width:380px){
+  .tab{flex:1 1 calc(50% - 2px);font-size:13px;padding:9px 5px}
+  .nav a,.nav span.dis{padding:9px 3px;font-size:12px}
+  /* 320px 上只留箭头：省下两侧各约 30px，导航才不用换行（换行会让 header 从
+     133 涨到 178px）。相邻日期在下拉里看得到，不算信息丢失。 */
+  .nav a em{display:none}
+  .nav select{flex:1.6 1 76px;min-width:76px}
+  .lang a,.lang span{padding:5px 7px;font-size:11.5px}
+  .nav a.all,.nav button.tg{padding:9px 9px}
+  table{font-size:12px}
+  th,td{padding:7px 8px 7px 0}
+  main{padding:22px 14px 56px}
+}
+
+/* 表格对齐：渲染器输出 class 而不是内联 style——少一处「往属性里塞东西」的形状 */
+.a-left{text-align:left}
+.a-center{text-align:center}
+.a-right{text-align:right}

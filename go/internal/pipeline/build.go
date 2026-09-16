@@ -57,7 +57,7 @@ func Site(root string, cfg *config.Config, out io.Writer) (localDir, publicDir s
 		for _, l := range eff {
 			o := site.Options{
 				Root: root, Out: langs.SubDir(dir, l, eff), Days: days,
-				Lang: l, AllLangs: eff, SiteURL: siteURL, Contact: contact,
+				Lang: l, AllLangs: eff, SiteURL: siteURL, Contact: contact, Log: out,
 			}
 			if err := site.Build(o); err != nil {
 				return fmt.Errorf("生成 %s 站点: %w", l, err)

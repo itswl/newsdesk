@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/itswl/newsdesk2/internal/langs"
@@ -210,23 +211,26 @@ func cmdStatus(ctx context.Context, args []string) error {
 	fmt.Printf("%s\n", today)
 	for _, t := range task.All {
 		ts := s.Tasks[t.Key]
-		mark, note := "·", "今天没有记录"
+		mark, note := "·", "今天还没跑"
 		if ts.Date == today {
-			note = ts.Status
 			switch ts.Status {
 			case "ok":
-				mark = "✓"
+				mark, note = "✓", "已完成"
 			case "failed":
 				mark, note = "✗", fmt.Sprintf("失败 %d 次：%s", ts.Attempts, ts.Reason)
 			case "skipped":
 				mark, note = "–", "跳过："+ts.Reason
+			default:
+				note = ts.Status
 			}
 		}
+		// 报告在就是跑过了。手动跑不会写调度状态，只看 schedule.json 会把
+		// 已有产出的那一档报成「还没跑」。
 		if p, ok := pipeline.ReportPath(root, today, t); ok {
-			note += "   报告 " + st.RelTo(p)
 			if mark == "·" {
-				mark = "✓"
+				mark, note = "✓", "已完成（手动）"
 			}
+			note += "   " + st.RelTo(p)
 		}
 		fmt.Printf("  %s %-9s %s  %s\n", mark, t.Key, t.At, note)
 	}
@@ -237,8 +241,10 @@ func cmdStatus(ctx context.Context, args []string) error {
 		}
 		if json.Unmarshal(raw, &h) == nil && h.HeartbeatEpoch > 0 {
 			age := time.Since(time.Unix(h.HeartbeatEpoch, 0))
+			// 光看心跳新旧不够：刚停掉的调度器心跳还很新，会被报成运行中。
+			// 心跳文件是它留下的痕迹，不是它还活着的证明——要真的探一下进程。
 			live := "已停止"
-			if age < 5*time.Minute {
+			if h.PID > 0 && syscall.Kill(h.PID, 0) == nil && age < 5*time.Minute {
 				live = "运行中"
 			}
 			fmt.Printf("调度器：%s（pid %d，心跳 %s 前）\n", live, h.PID, age.Round(time.Second))

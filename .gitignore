@@ -1,16 +1,19 @@
-# 运行时产出，不进版本控制
-data/
-reports/
-site/
-site-public/
-logs/
-state/
+# 运行时产出，不进版本控制（仓库只放代码）。
+#
+# ⚠️ 前面的 / 不能省：不带斜杠的 `site/` 会匹配**任意层级**下同名的目录，
+# 把 go/internal/site/ 整个包一起忽略掉——而且 git status 干干净净，
+# 只有去仓库里找才会发现代码没进去。
+/data/
+/reports/
+/site/
+/logs/
+/state/
 
 # 环境特有值，仓库里只有 *.example.*
-config.conf
+/config.conf
+/sandbox-paths.local
 
 # 构建产物
-bin/
-go/bin/
-ts/node_modules/
-ts/dist/
+/bin/
+/ts/node_modules/
+/ts/dist/
