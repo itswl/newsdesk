@@ -214,3 +214,60 @@ func md5b64(s string) string {
 	sum := md5.Sum([]byte(s))
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
+
+// 对象名是远端给的，拼路径前必须挡住 ../ ——否则一个损坏的清单就能让恢复
+// 写到目录外面去。
+func TestPullRejectsPathTraversal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/o") {
+			json.NewEncoder(w).Encode(map[string]any{"objects": []Object{
+				{Name: "reports/../../evil.txt", Size: 1, MD5: md5b64("x")},
+				{Name: "reports/ok.md", Size: 2, MD5: md5b64("hi")},
+			}})
+			return
+		}
+		w.Write([]byte("hi"))
+	}))
+	defer srv.Close()
+
+	p, _ := testProfile(t)
+	p.Endpoint, p.Namespace = srv.URL, "ns"
+	dir := t.TempDir()
+	st, err := New(p).Pull(context.Background(), "bk", "reports/", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Files != 1 || st.Failed != 1 {
+		t.Fatalf("含 .. 的对象名必须被拒：%+v", st)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(dir), "evil.txt")); err == nil {
+		t.Fatal("写到目录外面去了")
+	}
+}
+
+func TestPullSkipsIdenticalFiles(t *testing.T) {
+	var gets int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/o") {
+			json.NewEncoder(w).Encode(map[string]any{"objects": []Object{
+				{Name: "reports/a.md", Size: 4, MD5: md5b64("same")},
+			}})
+			return
+		}
+		gets++
+		w.Write([]byte("same"))
+	}))
+	defer srv.Close()
+
+	p, _ := testProfile(t)
+	p.Endpoint, p.Namespace = srv.URL, "ns"
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "a.md"), []byte("same"), 0o644)
+	st, err := New(p).Pull(context.Background(), "bk", "reports/", dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Skipped != 1 || st.Files != 0 || gets != 0 {
+		t.Fatalf("内容一致的文件不该重下：%+v（下载 %d 次）", st, gets)
+	}
+}

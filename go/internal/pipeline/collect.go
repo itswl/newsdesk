@@ -44,7 +44,7 @@ func Collect(ctx context.Context, key, date string, cfg *config.Config, st *stor
 		gh := fetch.NewGitHub(c, githubToken(ctx, cfg))
 		return fetch.Trending(ctx, c, gh, st, date, cfg.Get("TRENDING_TIER", "t3"))
 	case "momoyu":
-		return fetch.Momoyu(ctx, c, st)
+		return fetch.Momoyu(ctx, c, st, date)
 	}
 	return fmt.Errorf("未知任务 %q", key)
 }

@@ -312,3 +312,70 @@ func (c *Client) Sync(ctx context.Context, dir string, o SyncOpts) (SyncStat, er
 	}
 	return st, nil
 }
+
+// Get 取回一个对象。
+func (c *Client) Get(ctx context.Context, bucket, name string) ([]byte, error) {
+	ns, err := c.Namespace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.do(ctx, http.MethodGet, objectURL(c.P.endpoint(), ns, bucket, name), nil, nil)
+}
+
+type PullStat struct {
+	Files, Skipped, Failed int
+	Bytes                  int64
+	Errs                   []string
+}
+
+// Pull 把桶里某前缀下的对象拉回本地目录。
+//
+// 已存在且 MD5 一致的跳过——换机器恢复时大多数文件是对的，全量重下没意义。
+func (c *Client) Pull(ctx context.Context, bucket, prefix, dir string) (PullStat, error) {
+	var st PullStat
+	objs, err := c.List(ctx, bucket, prefix)
+	if err != nil {
+		return st, err
+	}
+	names := make([]string, 0, len(objs))
+	for n := range objs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		rel := strings.TrimPrefix(name, prefix)
+		// 对象名是远端给的，拼路径前必须挡住 ../ ——否则一个恶意或损坏的清单
+		// 就能让恢复写到目录外面去。
+		if rel == "" || strings.Contains(rel, "..") || strings.HasPrefix(rel, "/") {
+			st.Failed++
+			st.Errs = append(st.Errs, "跳过可疑对象名: "+name)
+			continue
+		}
+		dst := filepath.Join(dir, filepath.FromSlash(rel))
+		if b, err := os.ReadFile(dst); err == nil {
+			sum := md5.Sum(b)
+			if base64.StdEncoding.EncodeToString(sum[:]) == objs[name].MD5 {
+				st.Skipped++
+				continue
+			}
+		}
+		body, err := c.Get(ctx, bucket, name)
+		if err != nil {
+			st.Failed++
+			if len(st.Errs) < 10 {
+				st.Errs = append(st.Errs, fmt.Sprintf("%s: %v", name, err))
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+			return st, err
+		}
+		if err := os.WriteFile(dst, body, 0o644); err != nil {
+			return st, err
+		}
+		st.Files++
+		st.Bytes += int64(len(body))
+	}
+	return st, nil
+}

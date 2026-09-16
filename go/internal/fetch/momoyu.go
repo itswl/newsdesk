@@ -37,7 +37,7 @@ type momoyuItem struct {
 //
 // 产物按**内容日期**归档而不是运行日期：21:45 跑的是当天的榜，
 // 但接口给的 create_time 才是这批数据真正属于哪一天。
-func Momoyu(ctx context.Context, c *Client, st *store.Store) error {
+func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error {
 	raw, err := c.Get(ctx, momoyuAPI, map[string]string{"Referer": "https://momoyu.cc/"})
 	var resp momoyuResp
 	if err == nil {
@@ -59,13 +59,12 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store) error {
 	}
 	fmt.Printf("分类 %d，源 %d，条目 %d\n", len(resp.Data), nSrc, nItem)
 
-	day := time.Now()
-	if len(resp.Data) > 0 && len(resp.Data[0].Data) > 0 {
-		if t, ok := parseMomoyuTime(resp.Data[0].Data[0].CreateTime); ok {
-			day = t
-		}
-	}
-	date := day.Format("2006-01-02")
+	// 目录按**运行日期**分，不按源数据自己的日期。
+	//
+	// 差别在午夜之后和源滞后时就会显出来：接口最新条目还停在昨天，按它建目录
+	// 的话数据落进 data/momoyu/<昨天>/，而 prompt 里写的是今天的路径、
+	// 跨期比对也按今天找——模型会去读一个不存在的目录然后自己编。
+	// 源的滞后另有出口：下面的滞后源清单，以及报告结尾必须带的各源时间戳表。
 	dd := st.Data("momoyu", date)
 	if err := st.MkdirAll(dd); err != nil {
 		return err

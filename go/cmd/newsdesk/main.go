@@ -29,6 +29,7 @@ const usage = `newsdesk —— 每日简报流水线
   site                只重建静态站
   translate [日期]     把某天的报告翻成英文（默认今天）
   publish             只发布已生成的站点
+  restore             从私有桶拉回 reports / data / site / state
   leakcheck           扫产出里有没有混进凭据
   prune               清理过期数据
 
@@ -66,6 +67,8 @@ func main() {
 		err = cmdTranslate(ctx, args)
 	case "publish":
 		err = cmdPublish(ctx, args)
+	case "restore":
+		err = cmdRestore(ctx, args)
 	case "leakcheck":
 		err = cmdLeakcheck(ctx, args)
 	case "prune":

@@ -205,9 +205,27 @@ func checkSandbox(ctx context.Context, d *doc, root string) {
 	}
 	d.ok("沙箱内能执行命令")
 
+	// 探的是 codex 那层沙箱，用的必须是**它自己的**清单。
+	//
+	// ~/.codex 是 codex 的认证，从它的沙箱里排掉是有意的——整个进程跑在外层
+	// 沙箱里，读不到就登录不了。拿全量清单去探会把这条报成漏洞，然后有人
+	// 「修」掉它，引擎第二天起不来。claude 不同：它的沙箱只约束模型执行的命令，
+	// 自己读配置在沙箱外，所以 ~/.claude 对它照拒不误。
+	engineDeny := append(sandbox.DenyForEngine(h, root, "codex"), sandbox.DenyFiles(h, root)...)
+	var exempt []string
+	for _, p := range deny {
+		if !contains(engineDeny, p) {
+			exempt = append(exempt, strings.Replace(p, h, "~", 1))
+		}
+	}
+	if len(exempt) > 0 {
+		d.ok("codex 沙箱按设计放行 %s（它自己的认证，拒掉就登录不了）",
+			strings.Join(exempt, " "))
+	}
+
 	// 布尔探针：只看权限位，不读任何内容
 	var leaked []string
-	for _, p := range deny {
+	for _, p := range engineDeny {
 		p = strings.TrimSuffix(p, "/")
 		if _, err := os.Stat(p); err != nil {
 			continue // 本机没有这个路径，不算漏
@@ -242,6 +260,15 @@ func checkSandbox(ctx context.Context, d *doc, root string) {
 			d.ok("钥匙串仍可读（有意为之，引擎登录态在里面）")
 		}
 	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 func indent(s string) string {
