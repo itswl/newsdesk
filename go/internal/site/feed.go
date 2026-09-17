@@ -37,7 +37,8 @@ func (b *Builder) writeFeed() error {
 	if b.o.Days == 0 {
 		max = 20 // 不限窗时 days 可能攒到上百天，全放进去会几十 MB
 	}
-	if len(items) > max {
+	truncated := len(items) > max
+	if truncated {
 		items = items[:max]
 	}
 
@@ -91,9 +92,18 @@ func (b *Builder) writeFeed() error {
 		covered[e.Day] = true
 	}
 	st, _ := os.Stat(path)
+	// ⚠️ 两种原因要分开报，处置完全不同：
+	//   条数上限截短 → 读者的 feed 比站点窄，是真不一致，要调上限或收窄窗口
+	//   那天没内容   → 正常，比如某一档当天没跑
+	// 早先这里无条件写「被条数上限截短了」，而英文那份实际是缺译文——
+	// 照着错误的原因去调上限，问题一动不动。
 	warn := ""
 	if len(covered) != len(b.days) {
-		warn = " ← 被条数上限截短了"
+		if truncated {
+			warn = fmt.Sprintf(" ← 被条数上限 %d 截短了", max)
+		} else {
+			warn = " ← 有几天没有内容"
+		}
 	}
 	b.logf("  feed.xml  (%d 条 · 覆盖 %d 天 / 站点 %d 天%s，%.0f KB)\n",
 		len(items), len(covered), len(b.days), warn, float64(st.Size())/1024)

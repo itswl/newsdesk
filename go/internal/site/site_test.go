@@ -297,3 +297,67 @@ func TestLangSwitcherOnlyWhenMultiple(t *testing.T) {
 		t.Fatal("多语言时应出现完整切换器")
 	}
 }
+
+// 英文是后加的，早期那些天没有译文。不按语言筛天数的话会生成一堆只有导航和
+// 页脚、正文为空的壳页面——21 KB，从归档点进去什么都没有，也不解释为什么。
+func TestLanguageWithoutReportsSkipsThoseDays(t *testing.T) {
+	root := fixture(t, "2026-09-15", "2026-09-16", "2026-09-17")
+	// 只给最后一天准备英文译文
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"),
+		"# AI Digest\n\nEnglish body.\n")
+
+	en := build(t, Options{Root: root, Lang: i18n.En})
+	for _, gone := range []string{"2026-09-15.html", "2026-09-16.html"} {
+		if _, err := os.Stat(filepath.Join(en, gone)); err == nil {
+			t.Errorf("没有英文内容的 %s 不该生成", gone)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(en, "2026-09-17.html")); err != nil {
+		t.Fatal("有译文的那天应当生成")
+	}
+	// 归档、日期下拉、feed 全由同一个 days 推导，所以也不该链到被跳过的天
+	if s := read(t, filepath.Join(en, "archive.html")); strings.Contains(s, "2026-09-15") {
+		t.Error("归档里还链着没有英文内容的日子，点进去是 404")
+	}
+
+	// 中文不受影响
+	zh := build(t, Options{Root: root, Lang: i18n.ZhCN})
+	for _, d := range []string{"2026-09-15.html", "2026-09-16.html", "2026-09-17.html"} {
+		if _, err := os.Stat(filepath.Join(zh, d)); err != nil {
+			t.Errorf("简体站不该少 %s", d)
+		}
+	}
+}
+
+// 一天都没有就该明确报错，而不是产出一个空站——空站会被当成正常发布。
+func TestLanguageWithNoReportsAtAllIsAnError(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	err := Build(Options{Root: root, Out: filepath.Join(t.TempDir(), "s"), Lang: i18n.En})
+	if err == nil {
+		t.Fatal("该语言一篇报告都没有时应当报错")
+	}
+	if !strings.Contains(err.Error(), "en") {
+		t.Fatalf("报错要说清是哪个语言：%v", err)
+	}
+}
+
+// feed 比站点窄有两种原因，处置完全不同：条数上限截短是真不一致（要调上限
+// 或收窄窗口），某天没内容是正常的。早先无条件写「被条数上限截短了」，
+// 照着错误的原因去调上限，问题一动不动。
+func TestFeedCoverageMatchesSite(t *testing.T) {
+	root := fixture(t, "2026-09-15", "2026-09-16", "2026-09-17")
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# D\n\nB.\n")
+
+	var log strings.Builder
+	out := filepath.Join(t.TempDir(), "s")
+	if err := Build(Options{Root: root, Out: out, Lang: i18n.En,
+		SiteURL: "https://x.example.com", Log: &log}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(log.String(), "截短") {
+		t.Errorf("缺译文不是条数上限的问题，不该这么报：\n%s", log.String())
+	}
+	if !strings.Contains(log.String(), "覆盖 1 天 / 站点 1 天") {
+		t.Errorf("筛过之后 feed 与站点应当一致：\n%s", log.String())
+	}
+}

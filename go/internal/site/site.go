@@ -93,14 +93,31 @@ func (b *Builder) collectDays() error {
 	if err != nil {
 		return fmt.Errorf("读 reports/: %w", err)
 	}
+	var skipped int
 	for _, e := range ents {
-		if e.IsDir() && reDate.MatchString(e.Name()) {
-			b.allDays = append(b.allDays, e.Name())
+		if !e.IsDir() || !reDate.MatchString(e.Name()) {
+			continue
 		}
+		// 天数列表必须按**当前语言**筛。英文是后加的，早期那些天根本没有译文，
+		// 不筛的话会生成一堆只有导航和页脚、正文为空的壳页面——21 KB，
+		// 从归档点进去什么都没有，也不解释为什么。
+		//
+		// 筛在这一处就够：日期下拉、上下一天、归档页、feed 全由 days 推导，
+		// 砍掉之后自动一致。换成「生成了再在页面上写一句没有译文」的话，
+		// feed 里仍会多出空条目，归档也还是会链过去。
+		if !b.hasAny(e.Name()) {
+			skipped++
+			continue
+		}
+		b.allDays = append(b.allDays, e.Name())
 	}
 	sort.Strings(b.allDays)
 	if len(b.allDays) == 0 {
-		return fmt.Errorf("reports/ 下没有任何 YYYY-MM-DD 目录")
+		return fmt.Errorf("reports/ 下没有任何含 %s 内容的日期目录（共 %d 天有其他语言的报告）",
+			b.o.Lang, skipped)
+	}
+	if skipped > 0 {
+		b.logf("  %s：%d 天没有该语言的报告，已跳过\n", b.o.Lang, skipped)
 	}
 	b.days = b.allDays
 	// 截断只此一处：下面的日期下拉、上下一天、归档页、feed 全由 days 推导，
@@ -155,6 +172,16 @@ func isTranslated(path string) bool {
 }
 
 func (b *Builder) T(key string, args ...any) string { return i18n.T(b.o.Lang, key, args...) }
+
+// hasAny 这一天在当前语言下有没有任何一篇报告。
+func (b *Builder) hasAny(day string) bool {
+	for _, t := range task.All {
+		if _, ok := b.reportFile(day, t); ok {
+			return true
+		}
+	}
+	return false
+}
 
 func (b *Builder) logf(format string, a ...any) {
 	w := b.o.Log
