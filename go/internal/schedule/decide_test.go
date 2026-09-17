@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/engine"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/engine"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 func at(s string) time.Time {

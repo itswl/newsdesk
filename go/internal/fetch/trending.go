@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/store"
+	"github.com/itswl/newsdesk/internal/store"
 )
 
 // reserve 预留配额，避免把它榨干导致下次运行直接失败。

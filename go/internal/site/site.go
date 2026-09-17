@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/itswl/newsdesk2/internal/i18n"
-	"github.com/itswl/newsdesk2/internal/markdown"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/i18n"
+	"github.com/itswl/newsdesk/internal/markdown"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 type Options struct {

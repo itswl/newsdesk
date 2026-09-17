@@ -19,7 +19,7 @@ import (
 // UA 必须显式设。默认的 Go-http-client 会被 Cloudflare 按客户端签名封掉
 // （实测某网关对 Python-urllib 的默认 UA 返回 403 error code 1010），
 // 而告警端点多半也在 CDN 后面，告警发不出去这件事本身最难发现。
-const UA = "newsdesk/2.0 (+https://github.com/itswl/newsdesk2)"
+const UA = "newsdesk/2.0 (+https://github.com/itswl/newsdesk)"
 
 type Notifier struct {
 	Webhook string

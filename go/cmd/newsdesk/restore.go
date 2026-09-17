@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/itswl/newsdesk2/internal/oci"
+	"github.com/itswl/newsdesk/internal/oci"
 )
 
 // cmdRestore 从私有桶拉回历史产出。

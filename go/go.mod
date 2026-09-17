@@ -1,3 +1,3 @@
-module github.com/itswl/newsdesk2
+module github.com/itswl/newsdesk
 
 go 1.27

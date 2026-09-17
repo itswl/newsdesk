@@ -9,13 +9,13 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/i18n"
-	"github.com/itswl/newsdesk2/internal/langs"
-	"github.com/itswl/newsdesk2/internal/leak"
-	"github.com/itswl/newsdesk2/internal/publish"
-	"github.com/itswl/newsdesk2/internal/site"
-	"github.com/itswl/newsdesk2/internal/translate"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/i18n"
+	"github.com/itswl/newsdesk/internal/langs"
+	"github.com/itswl/newsdesk/internal/leak"
+	"github.com/itswl/newsdesk/internal/publish"
+	"github.com/itswl/newsdesk/internal/site"
+	"github.com/itswl/newsdesk/internal/translate"
 )
 
 // Translate 把当天的报告翻成英文。

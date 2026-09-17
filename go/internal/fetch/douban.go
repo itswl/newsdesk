@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/store"
+	"github.com/itswl/newsdesk/internal/store"
 )
 
 // 标签在 URL 里要 percent-encode。Python 版是写死的编码串表，

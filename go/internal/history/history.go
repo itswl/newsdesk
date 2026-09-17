@@ -17,7 +17,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/store"
+	"github.com/itswl/newsdesk/internal/store"
 )
 
 // Window 回看一周。再长意义不大：话题很少真热过三四天，

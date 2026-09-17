@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/i18n"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/i18n"
 )
 
 type Status struct {

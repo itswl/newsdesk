@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 // prompt 里的日期由执行器代入。让模型自己算日期会算错（时区、跨零点），

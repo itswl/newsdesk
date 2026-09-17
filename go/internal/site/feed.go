@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/i18n"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/i18n"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 // feedTitle 多语言时带语言标识：「每日简报」和「每日簡報」在阅读器侧边栏里

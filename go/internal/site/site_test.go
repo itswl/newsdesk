@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/i18n"
+	"github.com/itswl/newsdesk/internal/i18n"
 )
 
 // fixture 造一个最小仓库：若干天的报告。

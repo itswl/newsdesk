@@ -11,14 +11,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/langs"
-	"github.com/itswl/newsdesk2/internal/pipeline"
-	"github.com/itswl/newsdesk2/internal/prune"
-	"github.com/itswl/newsdesk2/internal/sandbox"
-	"github.com/itswl/newsdesk2/internal/schedule"
-	"github.com/itswl/newsdesk2/internal/store"
-	"github.com/itswl/newsdesk2/internal/task"
-	"github.com/itswl/newsdesk2/internal/translate"
+	"github.com/itswl/newsdesk/internal/langs"
+	"github.com/itswl/newsdesk/internal/pipeline"
+	"github.com/itswl/newsdesk/internal/prune"
+	"github.com/itswl/newsdesk/internal/sandbox"
+	"github.com/itswl/newsdesk/internal/schedule"
+	"github.com/itswl/newsdesk/internal/store"
+	"github.com/itswl/newsdesk/internal/task"
+	"github.com/itswl/newsdesk/internal/translate"
 )
 
 func pickTask(args []string) (task.Task, []string, error) {

@@ -9,10 +9,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/fetch"
-	"github.com/itswl/newsdesk2/internal/history"
-	"github.com/itswl/newsdesk2/internal/store"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/fetch"
+	"github.com/itswl/newsdesk/internal/history"
+	"github.com/itswl/newsdesk/internal/store"
 )
 
 // source 任务 key → 数据源目录名。

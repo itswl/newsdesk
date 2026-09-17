@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/store"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/store"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 // TaskState 是调度器写进 state/schedule.json 的每任务状态。

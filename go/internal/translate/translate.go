@@ -30,7 +30,7 @@ const (
 	// UA 必须显式设：默认的 Go-http-client 会被 Cloudflare 按客户端签名封掉
 	// （实测 Python-urllib 的默认 UA 在某网关返回 403 error code 1010，
 	// 而那条错误长得像鉴权失败，很容易一路查到密钥上去）。
-	userAgent = "newsdesk/2.0 (+https://github.com/itswl/newsdesk2)"
+	userAgent = "newsdesk/2.0 (+https://github.com/itswl/newsdesk)"
 )
 
 const system = `You translate Chinese tech-briefing reports into English.

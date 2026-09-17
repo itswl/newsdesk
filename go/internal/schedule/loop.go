@@ -10,11 +10,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/notify"
-	"github.com/itswl/newsdesk2/internal/pipeline"
-	"github.com/itswl/newsdesk2/internal/store"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/notify"
+	"github.com/itswl/newsdesk/internal/pipeline"
+	"github.com/itswl/newsdesk/internal/store"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 type Loop struct {

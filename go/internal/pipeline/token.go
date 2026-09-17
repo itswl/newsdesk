@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/itswl/newsdesk2/internal/config"
+	"github.com/itswl/newsdesk/internal/config"
 )
 
 // githubToken 令牌是可选的。

@@ -8,10 +8,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/engine"
-	"github.com/itswl/newsdesk2/internal/store"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/engine"
+	"github.com/itswl/newsdesk/internal/store"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 type Options struct {

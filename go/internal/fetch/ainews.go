@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/store"
+	"github.com/itswl/newsdesk/internal/store"
 )
 
 type Feed struct {

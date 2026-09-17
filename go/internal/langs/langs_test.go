@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/i18n"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/i18n"
 )
 
 func cfgOf(t *testing.T, body string) *config.Config {

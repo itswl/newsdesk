@@ -18,8 +18,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/sandbox"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/sandbox"
 )
 
 type Kind string

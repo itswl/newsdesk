@@ -9,12 +9,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/config"
-	"github.com/itswl/newsdesk2/internal/langs"
-	"github.com/itswl/newsdesk2/internal/notify"
-	"github.com/itswl/newsdesk2/internal/oci"
-	"github.com/itswl/newsdesk2/internal/sandbox"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/langs"
+	"github.com/itswl/newsdesk/internal/notify"
+	"github.com/itswl/newsdesk/internal/oci"
+	"github.com/itswl/newsdesk/internal/sandbox"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 type doc struct{ fail, warn int }

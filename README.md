@@ -118,7 +118,7 @@ prompts/               四个任务的分析契约——方法论的坑最终落
 
 ## 前身
 
-这套东西最早是 Python 写的：[itswl/newsdesk](https://github.com/itswl/newsdesk)，
+这套东西最早是 Python 写的：[itswl/newsdesk-archive](https://github.com/itswl/newsdesk-archive)，
 已归档在 tag `python-reference`。功能相同，那边的 `tests/` 是行为规格，
 `AGENTS.md` 是同一批约束的另一种写法。
 

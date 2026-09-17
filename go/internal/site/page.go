@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/itswl/newsdesk2/internal/i18n"
-	"github.com/itswl/newsdesk2/internal/task"
+	"github.com/itswl/newsdesk/internal/i18n"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 //go:embed assets/site.css

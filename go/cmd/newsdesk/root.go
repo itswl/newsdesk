@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/itswl/newsdesk2/internal/config"
+	"github.com/itswl/newsdesk/internal/config"
 )
 
 // findRoot 自行推导仓库根目录。
