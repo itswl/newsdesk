@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/itswl/newsdesk/internal/engine"
 	"github.com/itswl/newsdesk/internal/langs"
 	"github.com/itswl/newsdesk/internal/pipeline"
 	"github.com/itswl/newsdesk/internal/prune"
@@ -195,9 +196,17 @@ func cmdPrune(ctx context.Context, args []string) error {
 }
 
 func cmdSchedule(ctx context.Context, args []string) error {
+	fs := flag.NewFlagSet("schedule", flag.ExitOnError)
+	bg := fs.Bool("d", false, "转入后台运行，输出写进 logs/scheduler.log")
+	fs.BoolVar(bg, "daemon", false, "同 -d")
+	_ = fs.Parse(args)
+
 	root, err := findRoot()
 	if err != nil {
 		return err
+	}
+	if *bg && os.Getenv("NEWSDESK_DAEMON") == "" {
+		return daemonize(root)
 	}
 	cfg, err := loadConfig(root)
 	if err != nil {
@@ -216,8 +225,12 @@ func cmdStatus(ctx context.Context, args []string) error {
 	if err != nil {
 		fmt.Printf("!! %v\n", err)
 	}
+	cfg, err := loadConfig(root)
+	if err != nil {
+		return err
+	}
 	today := store.Today()
-	fmt.Printf("%s\n", today)
+	fmt.Printf("%s   %s\n", today, engine.PlanLine(cfg))
 	for _, t := range task.All {
 		ts := s.Tasks[t.Key]
 		mark, note := "·", "今天还没跑"
@@ -233,11 +246,19 @@ func cmdStatus(ctx context.Context, args []string) error {
 				note = ts.Status
 			}
 		}
-		// 报告在就是跑过了。手动跑不会写调度状态，只看 schedule.json 会把
-		// 已有产出的那一档报成「还没跑」。
+		// 报告在就是跑过了。手动跑不写调度状态，被中断过的档还留着失败记录——
+		// 只看 schedule.json 会把已有产出的那一档报成「还没跑」或「失败」。
+		// 判据跟调度器的 reconcile 一致：产出时刻不早于预定时刻才算这一档的。
 		if p, ok := pipeline.ReportPath(root, today, t); ok {
-			if mark == "·" {
-				mark, note = "✓", "已完成（手动）"
+			fresh := false
+			if fi, err := os.Stat(p); err == nil && !fi.ModTime().Before(t.DueAt(time.Now())) {
+				fresh = true
+			}
+			switch {
+			case fresh && ts.Status != "ok":
+				mark, note = "✓", "已完成（产出在，调度状态未同步）"
+			case mark == "·":
+				mark, note = "·", note+"（有上一轮的产出）"
 			}
 			note += "   " + st.RelTo(p)
 		}

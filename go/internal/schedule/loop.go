@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/engine"
 	"github.com/itswl/newsdesk/internal/notify"
 	"github.com/itswl/newsdesk/internal/pipeline"
 	"github.com/itswl/newsdesk/internal/store"
@@ -72,6 +73,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 	l.logf("调度器启动，pid %d", os.Getpid())
 	l.logf("时间表：%s", strings.Join(sched, " | "))
+	l.logf("%s", engine.PlanLine(l.Cfg))
 	l.logf("日终核对：%s", l.auditAt)
 
 	st, err := Load(l.statePath)
@@ -112,6 +114,14 @@ func (l *Loop) Run(ctx context.Context) error {
 func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
 	now := time.Now()
 	for _, t := range task.All {
+		// 先跟产出对一次账。手动跑过的档在调度状态里没有记录，被中断过的档
+		// 还留着一条失败记录——两种情况都会让调度器把已经有报告的任务再跑
+		// 一遍，白烧一次模型调用还覆盖掉好的产出。
+		// 日终核对本来就以产出为准，判定这边不看就是两套标准。
+		if l.reconcile(t, now, st) {
+			_ = WriteHealth(l.healthPath, st, sched)
+			continue
+		}
 		d := Decide(t, now, st.Tasks[t.Key])
 		switch d.Action {
 		case ActWait:
@@ -134,6 +144,45 @@ func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
 	return WriteHealth(l.healthPath, st, sched)
 }
 
+// reconcile 用产出校正调度状态，返回 true 表示这一档已经有今天的报告、不必再跑。
+//
+// ⚠️ 判据是「报告的生成时刻不早于这一档的预定时刻」，不是「今天有这个文件」。
+// Trending 那一档有早间草稿：文件在、但那是上一轮的产物，16:40 的正式那次
+// 仍然要跑。只看文件存在会把它整档跳过，而且不报错。
+func (l *Loop) reconcile(t task.Task, now time.Time, st *State) bool {
+	day := now.Format("2006-01-02")
+	if cur := st.Tasks[t.Key]; cur.Date == day && cur.Status == "ok" {
+		return true
+	}
+	p, ok := pipeline.ReportPath(l.Root, day, t)
+	if !ok {
+		return false
+	}
+	fi, err := os.Stat(p)
+	if err != nil || fi.ModTime().Before(t.DueAt(now)) {
+		return false
+	}
+	prev := st.Tasks[t.Key]
+	st.Tasks[t.Key] = TaskState{
+		Date: day, Status: "ok", Engine: prev.Engine, Attempts: prev.Attempts,
+		Finished: fi.ModTime().Format(time.RFC3339),
+		Reason:   "按产出校正（" + reconcileWhy(prev, day) + "）",
+	}
+	l.logf("[%s] 今天已有报告（%s），按产出校正为已完成，不再重跑",
+		t.Key, fi.ModTime().Format("15:04"))
+	if err := st.Save(l.statePath); err != nil {
+		l.logf("!! 状态保存失败：%v", err)
+	}
+	return true
+}
+
+func reconcileWhy(prev TaskState, day string) string {
+	if prev.Date == day && prev.Status == "failed" {
+		return "原记录为失败，但产出存在"
+	}
+	return "手动跑过，调度状态里没有记录"
+}
+
 func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, now time.Time) {
 	day := now.Format("2006-01-02")
 	res, err := pipeline.Run(ctx, pipeline.Options{
@@ -141,13 +190,24 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 		Log: prefixWriter{prefix: "[" + t.Key + "] "},
 	})
 	end := time.Now()
+
+	// 主动停止不是失败。收到退出信号时模型子进程会被一起杀掉，pipeline 因此
+	// 报错——但把它记成 failed 会吃掉一次重试额度，而重试上限只有三次：
+	// 在一档的窗口里重启两次调度器，这一档当天就再也不会跑了，还会推一条
+	// 「任务失败」告警。状态原样留着，重启后按「今天还没跑」正常补跑。
+	if ctx.Err() != nil {
+		l.logf("[%s] 被退出信号中断，未记为失败（重启后会重新补跑）", t.Key)
+		return
+	}
+
 	next, final := AfterRun(st.Tasks[t.Key], day, res.Engine, res.Failure, err, d.Late, end)
 	st.Tasks[t.Key] = next
 	if e := st.Save(l.statePath); e != nil {
 		l.logf("!! 状态保存失败：%v", e)
 	}
 	if err == nil {
-		l.logf("[%s] 完成，用时 %s，引擎 %s", t.Key, res.Duration.Round(time.Second), res.Engine)
+		l.logf("[%s] 完成，用时 %s，%s", t.Key,
+			res.Duration.Round(time.Second), engine.Describe(l.Cfg, res.Engine))
 		return
 	}
 	l.logf("[%s] 失败（第 %d 次）：%v", t.Key, next.Attempts, err)

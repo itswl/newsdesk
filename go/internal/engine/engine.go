@@ -161,3 +161,73 @@ func Classify(out string) Failure {
 	}
 	return FailOther
 }
+
+// Model 某个引擎实际会用的模型名。
+func Model(cfg *config.Config, kind Kind) string {
+	switch kind {
+	case Claude:
+		return cfg.Get("CLAUDE_MODEL", "claude-sonnet-5")
+	case Codex:
+		return cfg.Get("CODEX_MODEL", "gpt-5.6-luna")
+	case API:
+		return cfg.Get("FALLBACK_MODEL", "")
+	}
+	return ""
+}
+
+// Describe 一行说清「这次会用谁、用哪个模型」。
+//
+// 无人值守跑的东西，最难查的问题之一是「报告是哪个引擎写的」——切了兜底而
+// 日志里只有一句「完成」，风格突变就只能靠猜。所以启动、每次调用、每次完成
+// 都把引擎和模型显式打出来。
+//
+// api 走的仍是 claude CLI，只是换了端点，必须连端点一起报：同一个 "api"
+// 指向不同网关时产出可以完全不同。
+func Describe(cfg *config.Config, kind Kind) string {
+	m := Model(cfg, kind)
+	switch kind {
+	case Claude, Codex:
+		return fmt.Sprintf("%s / %s", kind, m)
+	case API:
+		base := cfg.Get("FALLBACK_BASE_URL", "")
+		if base == "" {
+			return fmt.Sprintf("api / %s（端点未配置）", m)
+		}
+		return fmt.Sprintf("api / %s @ %s", m, host(base))
+	case "":
+		return "未配置"
+	}
+	return string(kind)
+}
+
+// host 只取主机名。端点里可能带路径，全量打出来太长；也避免把查询串里
+// 可能夹带的东西写进日志。
+func host(raw string) string {
+	s := raw
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if i := strings.IndexAny(s, "/?#"); i >= 0 {
+		s = s[:i]
+	}
+	if i := strings.Index(s, "@"); i >= 0 { // 万一端点里写了 user:pass@
+		s = s[i+1:]
+	}
+	return s
+}
+
+// Plan 配置里定的主引擎与兜底引擎。
+func Plan(cfg *config.Config) (primary, fallback Kind) {
+	return Kind(cfg.Get("ENGINE", "claude")), Kind(cfg.Get("ENGINE_FALLBACK", ""))
+}
+
+// PlanLine 启动时打的那一行。
+func PlanLine(cfg *config.Config) string {
+	p, f := Plan(cfg)
+	s := "引擎：" + Describe(cfg, p)
+	if f == "" {
+		// 没有兜底是个该知道的事实：主引擎配额耗尽时那一档直接跳过
+		return s + "   兜底：未配置（主引擎失败即跳过当档）"
+	}
+	return s + "   兜底：" + Describe(cfg, f)
+}

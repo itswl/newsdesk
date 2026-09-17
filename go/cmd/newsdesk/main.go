@@ -20,7 +20,8 @@ const usage = `newsdesk —— 每日简报流水线
   newsdesk <命令> [参数]
 
 日常：
-  schedule            启动调度器（常驻，睡眠补跑）
+  schedule [-d]       启动调度器（常驻，睡眠补跑）。-d 转入后台
+  stop                停掉后台调度器
   run <任务>           立刻跑一档完整流程（采集→模型→建站→发布）
   status              看今天四档的状态
 
@@ -57,6 +58,8 @@ func main() {
 	switch cmd {
 	case "schedule":
 		err = cmdSchedule(ctx, args)
+	case "stop":
+		err = cmdStop(ctx, args)
 	case "run":
 		err = cmdRun(ctx, args)
 	case "fetch":

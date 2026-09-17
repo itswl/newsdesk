@@ -91,6 +91,9 @@ func Analyze(ctx context.Context, t task.Task, date string, cfg *config.Config,
 			continue
 		}
 		res.Engine, res.Attempts = kind, res.Attempts+1
+		// 报告是哪个引擎、哪个模型写的，必须留在这一档自己的日志里。
+		// 切了兜底而日志只有一句「完成」的话，风格突变就只能靠猜。
+		fmt.Fprintf(out, "  引擎: %s\n", engine.Describe(cfg, kind))
 		ring := &ringBuffer{max: 16 << 10}
 		r := &engine.Runner{Home: home, Root: root, Cfg: cfg, Out: io.MultiWriter(out, ring)}
 
