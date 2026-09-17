@@ -16,6 +16,7 @@ import (
 	"github.com/itswl/newsdesk/internal/i18n"
 	"github.com/itswl/newsdesk/internal/markdown"
 	"github.com/itswl/newsdesk/internal/task"
+	"time"
 )
 
 type Options struct {
@@ -36,6 +37,7 @@ type Builder struct {
 	days     []string // 截断后的日期，升序
 	allDays  []string // 截断前
 	rootLang i18n.Lang
+	genAt    time.Time // 本次构建的时刻，页脚标注用；一次构建共用一个值
 	windowed bool
 	entries  []entry // feed 用
 }
@@ -49,7 +51,7 @@ type entry struct {
 var reDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
 func Build(o Options) error {
-	b := &Builder{o: o}
+	b := &Builder{o: o, genAt: time.Now()}
 	if len(o.AllLangs) > 0 {
 		b.rootLang = o.AllLangs[0]
 	} else {

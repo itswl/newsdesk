@@ -25,6 +25,16 @@ const headJS = `<script>try{var t=localStorage.getItem("theme");` +
 
 const recentDays = 14 // 下拉里直接列出的天数，其余走归档页
 
+// genNote 页脚的生成时刻标注。精确到分。
+//
+// 页面是静态的、会被边缘缓存，读者看到的内容可能比现在旧得多——不标的话，
+// 「这是今天的榜还是几小时前的」只能靠猜。带时区偏移，不然 10:41 是哪个
+// 时区的 10:41 无法判断。
+func (b *Builder) genNote() string {
+	return fmt.Sprintf(`<p class="gen">%s</p>`, esc(b.T("gen.at",
+		b.genAt.Format("2006-01-02 15:04 (UTC-07:00)"))))
+}
+
 func (b *Builder) disclaimer() string {
 	s := b.T("dis.body")
 	if b.o.Contact != "" {
@@ -201,10 +211,10 @@ func (b *Builder) writeDay(day string) error {
 		`<title>%s %s</title>%s%s<style>%s</style></head><body>`+
 		`<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>`+
 		`<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s`+
-		`<footer class="dis">%s%s</footer></main><script>%s</script></body></html>`,
+		`<footer class="dis">%s%s<p class="gen">%s</p></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(b.T("site.name")), day, headJS, b.headLinks(day+".html"), css,
 		esc(b.T("site.name")), day, latest, b.nav(day), status,
-		tabs.String(), main, note, b.disclaimer(), js)
+		tabs.String(), main, note, b.disclaimer(), b.genNote(), js)
 
 	return os.WriteFile(filepath.Join(b.o.Out, day+".html"), []byte(doc), 0o644)
 }
@@ -272,12 +282,12 @@ func (b *Builder) writeArchive() error {
 		`<div class="nav"><a href="index.html">%s</a>%s`+
 		`<button class="tg" id="theme" title="%s">☀</button></div></div></header>`+
 		`<main>%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>`+
-		`<footer class="dis">%s</footer></main><script>%s</script></body></html>`,
+		`<footer class="dis">%s<p class="gen">%s</p></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(b.T("site.archive")), headJS, b.headLinks("archive.html"), css,
 		esc(b.T("site.archive")), esc(scope), esc(b.T("arch.days", len(b.days))),
 		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")),
 		note, esc(b.T("arch.date")), esc(b.T("arch.reports")), rows.String(),
-		b.disclaimer(), js)
+		b.disclaimer(), b.genNote(), js)
 	return os.WriteFile(filepath.Join(b.o.Out, "archive.html"), []byte(doc), 0o644)
 }
 

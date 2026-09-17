@@ -193,6 +193,7 @@ footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
 footer.dis{margin-top:72px;padding-top:22px;border-top:1px solid var(--bd);
   color:var(--fg3);font-size:12.5px;line-height:1.95}
 footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
+footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 
 @media (max-width:640px){
   body{font-size:16px;line-height:1.85}

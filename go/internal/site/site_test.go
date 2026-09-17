@@ -361,3 +361,35 @@ func TestFeedCoverageMatchesSite(t *testing.T) {
 		t.Errorf("筛过之后 feed 与站点应当一致：\n%s", log.String())
 	}
 }
+
+// 页面是静态的、会被边缘缓存——不标生成时刻的话，「这是现在的榜还是几小时前的」
+// 只能靠猜。精确到分，必须带时区偏移。
+func TestPageCarriesGenerationTime(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	out := build(t, Options{Root: root, SiteURL: "https://x.example.com"})
+	reTime := regexp.MustCompile(`本页生成于 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \(UTC[+-]\d{2}:\d{2}\)`)
+
+	for _, page := range []string{"index.html", "archive.html", "2026-09-17.html"} {
+		body := read(t, filepath.Join(out, page))
+		m := reTime.FindStringSubmatch(body)
+		if m == nil {
+			t.Errorf("%s 缺生成时刻标注（或没带时区偏移）", page)
+			continue
+		}
+		// 标的必须是真实可解析的时刻，不是占位符
+		if _, err := time.Parse("2006-01-02 15:04", m[1]); err != nil {
+			t.Errorf("%s 的时间不是合法格式：%s", page, m[1])
+		}
+	}
+
+	// 三语各自成文，繁体由简体现转。英文要有当天的译文才生成（语言筛选）
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
+	en := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.En}), "index.html"))
+	if !strings.Contains(en, "Page generated at 20") && !strings.Contains(en, "Page generated at 1") {
+		t.Error("英文版缺生成时刻标注")
+	}
+	tw := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.ZhTW}), "index.html"))
+	if !strings.Contains(tw, "本頁生成於") {
+		t.Error("繁体版缺生成时刻标注")
+	}
+}
