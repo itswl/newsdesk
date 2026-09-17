@@ -41,7 +41,39 @@ printf '%s' "$WEBHOOK" | npx wrangler secret put ALERT_WEBHOOK
 npx wrangler deploy
 ```
 
-令牌需要 `Account > Workers Scripts: Edit` 加 `Zone > Workers Routes: Edit`，
-走环境变量 `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` 传入。
+## 认证
+
+两条路，**不要把令牌直接敲在命令行里**——它会留在 shell history 里，也会被
+任何记录终端的工具留存。
+
+```bash
+npx wrangler login              # 首选：浏览器授权一次，凭据存本地并自动轮换
+```
+
+必须用 API 令牌时（CI、或不想开浏览器），先落到文件再 source：
+
+```bash
+echo 'export CLOUDFLARE_API_TOKEN=...' > ~/.cf-token && chmod 600 ~/.cf-token
+source ~/.cf-token && npx wrangler deploy
+```
+
+令牌权限要 `Account > Workers Scripts: Edit` 加 `Zone > Workers Routes: Edit`。
+
+⚠️ **别用 wrangler 提示的 `--temporary`**：那会创建一个临时账户并部署过去，
+路由和 secret 都不在那儿——看起来成功了，实际上线上一点没变。
+
+⚠️ 别拿 `/user/tokens/verify` 判断令牌有没有效：它只认旧格式，`cfut_`/`cfat_`
+新格式在那里报 Invalid 但实际调用完全正常。要验就用真实端点。
+
+## secret 与部署的关系
+
+`ALERT_WEBHOOK` 是 secret，跟脚本分开存。只要 Worker **名字不变**，重新部署
+会沿用已有的 secret 和路由。改了名字就得重设——而漏设不会报错，
+`selfCheck` 开头就 `if (!env.ALERT_WEBHOOK) return`，定时自查会静默地什么都不做，
+正好是这一层专门要防的失效方式。部署后确认一次：
+
+```bash
+npx wrangler secret list
+```
 
 部署后前几十秒 200/308 混杂是边缘路由同步的过渡态，会自行一致，不要据此回滚。
