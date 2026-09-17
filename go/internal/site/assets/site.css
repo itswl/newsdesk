@@ -84,7 +84,8 @@ h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:
    眼睛每行都要横扫一遍，长文读着累。表格允许在此基础上横向滚。 */
 main{max-width:760px;margin:0 auto;padding:44px 24px 96px}
 .pane{display:none}.pane.on{display:block}
-.src{color:var(--fg3);font-size:12px;margin-bottom:34px;font-family:ui-monospace,Menlo,monospace}
+.src{color:var(--fg3);font-size:12px;margin-bottom:2px;font-family:ui-monospace,Menlo,monospace}
+.src.gen{margin-bottom:34px;opacity:.8}
 
 h1{font-size:27px;line-height:1.45;margin:0 0 26px;color:var(--fgh);font-weight:650;letter-spacing:0}
 h2{font-size:20px;line-height:1.5;margin:52px 0 16px;color:var(--fgh);font-weight:650;letter-spacing:0}
@@ -221,7 +222,8 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:38px}
   .tab em{display:none}
   main{padding:28px 16px 64px;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
-  .src{font-size:11px;margin-bottom:24px}
+  .src{font-size:11px;margin-bottom:2px}
+  .src.gen{margin-bottom:24px}
   h1{font-size:22px;margin-bottom:20px}
   h2{font-size:18px;margin:38px 0 13px}
   h3{font-size:16px;margin:26px 0 9px}

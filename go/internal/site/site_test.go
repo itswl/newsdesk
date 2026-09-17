@@ -369,8 +369,13 @@ func TestPageCarriesGenerationTime(t *testing.T) {
 	out := build(t, Options{Root: root, SiteURL: "https://x.example.com"})
 	reTime := regexp.MustCompile(`本页生成于 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \(UTC[+-]\d{2}:\d{2}\)`)
 
-	for _, page := range []string{"index.html", "archive.html", "2026-09-17.html"} {
+	for _, page := range []string{"index.html", "2026-09-17.html"} {
 		body := read(t, filepath.Join(out, page))
+		// 位置：紧跟在 reports/ 路径行下面，读者进正文前先看到
+		i := strings.Index(body, `<div class="src">reports/`)
+		if i < 0 || !strings.Contains(body[i:i+600], `<div class="src gen">`) {
+			t.Errorf("%s 的生成时刻没有紧跟 reports/ 路径行", page)
+		}
 		m := reTime.FindStringSubmatch(body)
 		if m == nil {
 			t.Errorf("%s 缺生成时刻标注（或没带时区偏移）", page)
@@ -381,15 +386,19 @@ func TestPageCarriesGenerationTime(t *testing.T) {
 			t.Errorf("%s 的时间不是合法格式：%s", page, m[1])
 		}
 	}
+	// 归档页没有 reports/ 路径行，标注留在页脚
+	if a := read(t, filepath.Join(out, "archive.html")); !strings.Contains(a, `<p class="gen">`) {
+		t.Error("归档页页脚应保留生成时刻")
+	}
 
 	// 三语各自成文，繁体由简体现转。英文要有当天的译文才生成（语言筛选）
 	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
 	en := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.En}), "index.html"))
-	if !strings.Contains(en, "Page generated at 20") && !strings.Contains(en, "Page generated at 1") {
-		t.Error("英文版缺生成时刻标注")
+	if !strings.Contains(en, `<div class="src gen">Page generated at `) {
+		t.Error("英文版缺生成时刻标注或位置不对")
 	}
 	tw := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.ZhTW}), "index.html"))
-	if !strings.Contains(tw, "本頁生成於") {
-		t.Error("繁体版缺生成时刻标注")
+	if !strings.Contains(tw, `<div class="src gen">本頁生成於`) {
+		t.Error("繁体版缺生成时刻标注或位置不对")
 	}
 }

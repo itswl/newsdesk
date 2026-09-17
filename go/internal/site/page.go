@@ -25,14 +25,21 @@ const headJS = `<script>try{var t=localStorage.getItem("theme");` +
 
 const recentDays = 14 // 下拉里直接列出的天数，其余走归档页
 
-// genNote 页脚的生成时刻标注。精确到分。
+// 生成时刻标注。精确到分，带时区偏移——页面是静态的、会被边缘缓存，读者
+// 看到的内容可能比现在旧得多；不带偏移量的 10:41 也无法判断是哪个时区的。
 //
-// 页面是静态的、会被边缘缓存，读者看到的内容可能比现在旧得多——不标的话，
-// 「这是今天的榜还是几小时前的」只能靠猜。带时区偏移，不然 10:41 是哪个
-// 时区的 10:41 无法判断。
+// 两个位置：报告页跟在 reports/ 路径行下面（读者进正文前先看到），归档页
+// 没有路径行，放页脚。
+func (b *Builder) genTimeText() string {
+	return b.T("gen.at", b.genAt.Format("2006-01-02 15:04 (UTC-07:00)"))
+}
+
+func (b *Builder) genSrcNote() string {
+	return fmt.Sprintf(`<div class="src gen">%s</div>`, esc(b.genTimeText()))
+}
+
 func (b *Builder) genNote() string {
-	return fmt.Sprintf(`<p class="gen">%s</p>`, esc(b.T("gen.at",
-		b.genAt.Format("2006-01-02 15:04 (UTC-07:00)"))))
+	return fmt.Sprintf(`<p class="gen">%s</p>`, esc(b.genTimeText()))
 }
 
 func (b *Builder) disclaimer() string {
@@ -181,8 +188,8 @@ func (b *Builder) writeDay(day string) error {
 		}
 		fmt.Fprintf(&tabs, `<button class="tab%s" data-t="%s"%s>%s%s</button>`,
 			on, t.Key, tip, esc(label), badge)
-		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s"><div class="src">%s</div>%s</section>`,
-			on, t.Key, esc(relTo(b.o.Root, path)), body)
+		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s"><div class="src">%s</div>%s%s</section>`,
+			on, t.Key, esc(relTo(b.o.Root, path)), b.genSrcNote(), body)
 		first = false
 
 		st, _ := os.Stat(path)
@@ -211,10 +218,10 @@ func (b *Builder) writeDay(day string) error {
 		`<title>%s %s</title>%s%s<style>%s</style></head><body>`+
 		`<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>`+
 		`<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s`+
-		`<footer class="dis">%s%s<p class="gen">%s</p></main><script>%s</script></body></html>`,
+		`<footer class="dis">%s%s</footer></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(b.T("site.name")), day, headJS, b.headLinks(day+".html"), css,
 		esc(b.T("site.name")), day, latest, b.nav(day), status,
-		tabs.String(), main, note, b.disclaimer(), b.genNote(), js)
+		tabs.String(), main, note, b.disclaimer(), js)
 
 	return os.WriteFile(filepath.Join(b.o.Out, day+".html"), []byte(doc), 0o644)
 }
