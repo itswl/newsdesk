@@ -37,7 +37,7 @@ type Builder struct {
 	days     []string // 截断后的日期，升序
 	allDays  []string // 截断前
 	rootLang i18n.Lang
-	genAt    time.Time // 本次构建的时刻，页脚标注用；一次构建共用一个值
+	genAt    time.Time // 当前页面所含报告的最新更新时间，页脚标注用
 	windowed bool
 	entries  []entry // feed 用
 }
@@ -64,6 +64,7 @@ func Build(o Options) error {
 		return err
 	}
 	for _, d := range b.days {
+		b.genAt = b.contentTime(d)
 		if err := b.writeDay(d); err != nil {
 			return err
 		}
@@ -71,6 +72,7 @@ func Build(o Options) error {
 	if err := b.writeIndex(); err != nil {
 		return err
 	}
+	b.genAt = b.latestContentTime()
 	if err := b.writeArchive(); err != nil {
 		return err
 	}
@@ -87,6 +89,41 @@ func Build(o Options) error {
 	b.logf("已重建 %d 天：%s … %s%s\n  输出: %s\n",
 		len(b.days), b.days[0], b.days[len(b.days)-1], note, o.Out)
 	return nil
+}
+
+// contentTime 返回某天当前语言页面所含报告的最新更新时间。
+//
+// 站点是全量重建的，但报告通常只更新一档；用 time.Now() 会让所有历史页看起来
+// 都被重新生成。页脚应反映页面内容最后一次变化，而不是这次全站构建的时刻。
+func (b *Builder) contentTime(day string) time.Time {
+	var latest time.Time
+	for _, t := range task.All {
+		path, ok := b.reportFile(day, t)
+		if !ok {
+			continue
+		}
+		st, err := os.Stat(path)
+		if err == nil && st.ModTime().After(latest) {
+			latest = st.ModTime()
+		}
+	}
+	if latest.IsZero() {
+		return time.Now()
+	}
+	return latest
+}
+
+func (b *Builder) latestContentTime() time.Time {
+	var latest time.Time
+	for _, day := range b.days {
+		if t := b.contentTime(day); t.After(latest) {
+			latest = t
+		}
+	}
+	if latest.IsZero() {
+		return time.Now()
+	}
+	return latest
 }
 
 func (b *Builder) collectDays() error {

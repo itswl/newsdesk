@@ -1,8 +1,16 @@
 package translate
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // 译文最危险的失败不是「翻错」，是**结构被改**和**输出被截断**——
@@ -58,6 +66,63 @@ func TestOversizedSectionIsSplitFurther(t *testing.T) {
 func TestShortTextNotSplit(t *testing.T) {
 	if len(Chunks("# 短报告\n\n一句话。\n")) != 1 {
 		t.Error("短文不该切")
+	}
+}
+
+func TestFileTranslatesChunksWithBoundedConcurrency(t *testing.T) {
+	var mu sync.Mutex
+	active, peak := 0, 0
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		active++
+		if active > peak {
+			peak = active
+		}
+		mu.Unlock()
+		time.Sleep(30 * time.Millisecond)
+		mu.Lock()
+		active--
+		mu.Unlock()
+
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content":     []map[string]string{{"text": body.Messages[0].Content}},
+			"stop_reason": "end_turn",
+			"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer server.Close()
+
+	var src strings.Builder
+	for i := 0; i < 8; i++ {
+		src.WriteString("## 小节\n\n")
+		src.WriteString(strings.Repeat("内容。", 500))
+		src.WriteString("\n\n")
+	}
+	path := filepath.Join(t.TempDir(), "report.md")
+	if err := os.WriteFile(path, []byte(src.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(server.URL, "k", "m")
+	c.HTTP = server.Client()
+	if _, err := c.File(context.Background(), path, true); err != nil {
+		t.Fatal(err)
+	}
+	if peak > maxConcurrent {
+		t.Fatalf("并发数 %d 超过上限 %d", peak, maxConcurrent)
+	}
+	if peak < 2 {
+		t.Fatalf("长报告应启用并发，实际峰值为 %d", peak)
 	}
 }
 

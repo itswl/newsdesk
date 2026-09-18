@@ -25,17 +25,20 @@ const headJS = `<script>try{var t=localStorage.getItem("theme");` +
 
 const recentDays = 14 // 下拉里直接列出的天数，其余走归档页
 
-// 生成时刻标注。精确到分，带时区偏移——页面是静态的、会被边缘缓存，读者
+// 内容更新时间标注。精确到分，带时区偏移——页面是静态的、会被边缘缓存，读者
 // 看到的内容可能比现在旧得多；不带偏移量的 10:41 也无法判断是哪个时区的。
 //
-// 两个位置：报告页跟在 reports/ 路径行下面（读者进正文前先看到），归档页
-// 没有路径行，放页脚。
+// 栏目页跟在 reports/ 路径行下面，归档页没有路径行，放页脚。
 func (b *Builder) genTimeText() string {
 	return b.T("gen.at", b.genAt.Format("2006-01-02 15:04 (UTC-07:00)"))
 }
 
-func (b *Builder) genSrcNote() string {
-	return fmt.Sprintf(`<div class="src gen">%s</div>`, esc(b.genTimeText()))
+func (b *Builder) genSectionTimeText(at time.Time) string {
+	return b.T("gen.section_at", at.Format("2006-01-02 15:04 (UTC-07:00)"))
+}
+
+func (b *Builder) genSrcNote(at time.Time) string {
+	return fmt.Sprintf(`<div class="src gen">%s</div>`, esc(b.genSectionTimeText(at)))
 }
 
 func (b *Builder) genNote() string {
@@ -188,13 +191,19 @@ func (b *Builder) writeDay(day string) error {
 		}
 		fmt.Fprintf(&tabs, `<button class="tab%s" data-t="%s"%s>%s%s</button>`,
 			on, t.Key, tip, esc(label), badge)
+		st, err := os.Stat(path)
+		at := b.genAt
+		modTime := at.Unix()
+		if err == nil {
+			at = st.ModTime()
+			modTime = st.ModTime().Unix()
+		}
 		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s"><div class="src">%s</div>%s%s</section>`,
-			on, t.Key, esc(relTo(b.o.Root, path)), b.genSrcNote(), body)
+			on, t.Key, esc(relTo(b.o.Root, path)), b.genSrcNote(at), body)
 		first = false
 
-		st, _ := os.Stat(path)
 		b.entries = append(b.entries, entry{Day: day, Key: t.Key, Label: label,
-			ModTime: st.ModTime().Unix(), Body: body})
+			ModTime: modTime, Body: body})
 	}
 
 	main := panes.String()

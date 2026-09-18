@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,6 +28,9 @@ const (
 	// 而截断是静默的：文件看着正常，只是后半截没了。
 	chunkChars = 5000
 	retries    = 2
+	// 分块彼此独立，但供应商也有并发/限流；小并发能缩短长报告耗时，又不把
+	// 一次翻译变成一阵突发请求。
+	maxConcurrent = 2
 	// UA 必须显式设：默认的 Go-http-client 会被 Cloudflare 按客户端签名封掉
 	// （实测 Python-urllib 的默认 UA 在某网关返回 403 error code 1010，
 	// 而那条错误长得像鉴权失败，很容易一路查到密钥上去）。
@@ -241,33 +245,54 @@ func (c *Client) File(ctx context.Context, src string, force bool) (FileResult, 
 	}
 	text := string(raw)
 	start := time.Now()
-	var parts []string
-	var u Usage
 	pieces := Chunks(text)
+	parts := make([]string, len(pieces))
+	usages := make([]Usage, len(pieces))
+	errs := make([]error, len(pieces))
+	sem := make(chan struct{}, maxConcurrent)
+	var wg sync.WaitGroup
 	for i, p := range pieces {
-		var last error
-		ok := false
-		for a := 1; a <= retries; a++ {
-			seg, pu, err := c.call(ctx, p)
-			if err == nil {
-				parts = append(parts, strings.Trim(seg, "\n"))
-				u.Input += pu.Input
-				u.Output += pu.Output
-				ok = true
-				break
+		wg.Add(1)
+		go func(i int, p string) {
+			defer wg.Done()
+			select {
+			case sem <- struct{}{}:
+			case <-ctx.Done():
+				errs[i] = ctx.Err()
+				return
 			}
-			last = err
-			if a < retries { // 空返回、瞬时 5xx 多半重试一次就好
-				select {
-				case <-time.After(time.Duration(a*3) * time.Second):
-				case <-ctx.Done():
-					return FileResult{}, ctx.Err()
+			defer func() { <-sem }()
+
+			var last error
+			for a := 1; a <= retries; a++ {
+				seg, usage, err := c.call(ctx, p)
+				if err == nil {
+					parts[i] = strings.Trim(seg, "\n")
+					usages[i] = usage
+					return
+				}
+				last = err
+				if a < retries { // 空返回、瞬时 5xx 多半重试一次就好
+					select {
+					case <-time.After(time.Duration(a*3) * time.Second):
+					case <-ctx.Done():
+						errs[i] = ctx.Err()
+						return
+					}
 				}
 			}
+			errs[i] = fmt.Errorf("第 %d/%d 块翻译失败: %w", i+1, len(pieces), last)
+		}(i, p)
+	}
+	wg.Wait()
+
+	var u Usage
+	for i, err := range errs {
+		if err != nil {
+			return FileResult{}, err
 		}
-		if !ok {
-			return FileResult{}, fmt.Errorf("第 %d/%d 块翻译失败: %w", i+1, len(pieces), last)
-		}
+		u.Input += usages[i].Input
+		u.Output += usages[i].Output
 	}
 	out := strings.Join(parts, "\n\n") + "\n"
 

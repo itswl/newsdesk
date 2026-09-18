@@ -87,10 +87,11 @@ var s = map[string][2]string{
 	"st.pending": {"今天还没跑", "not run yet today"},
 	"st.planned": {"，计划 %s", ", scheduled %s"},
 
-	// 生成时刻。精确到分，带时区偏移——这套东西在时区上吃过两次亏
+	// 内容更新时间。精确到分，带时区偏移——这套东西在时区上吃过两次亏
 	// （status.json 的 epoch、Worker 的 UTC 解析），页面上的时间不带偏移量
 	// 的话，读者无法判断它是哪个时区的 10:41。
-	"gen.at": {"本页生成于 %s", "Page generated at %s"},
+	"gen.at":         {"本页内容更新于 %s", "Page content updated at %s"},
+	"gen.section_at": {"本栏内容更新于 %s", "Section content updated at %s"},
 
 	"dis.body": {
 		"本站为个人非商业性质的信息聚合与评述项目，内容由程序自动采集公开可访问的信息源，" +

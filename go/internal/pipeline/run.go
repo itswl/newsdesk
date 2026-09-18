@@ -62,21 +62,29 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if o.Log != nil {
 		out = io.MultiWriter(lf, o.Log)
 	}
-	step := func(n int, name string) {
+	step := func(n int, name string) func() {
+		started := time.Now()
 		fmt.Fprintf(out, "\n[%s] %d/6 %s  %s\n",
 			o.Task.Key, n, name, time.Now().Format("15:04:05"))
+		return func() {
+			fmt.Fprintf(out, "  %s 用时 %s\n", name, time.Since(started).Round(time.Second))
+		}
 	}
 	fmt.Fprintf(out, "\n===== %s %s 开始 =====\n", o.Date, o.Task.Key)
 
 	st := store.New(o.Root)
 
 	if !o.SkipFetch {
-		step(1, "采集")
-		if err := Collect(ctx, o.Task.Key, o.Date, o.Cfg, st); err != nil {
+		done := step(1, "采集")
+		err := Collect(ctx, o.Task.Key, o.Date, o.Cfg, st)
+		done()
+		if err != nil {
 			return res, fmt.Errorf("采集失败: %w", err)
 		}
-		step(2, "跨期比对")
-		if err := History(o.Task.Key, o.Date, st); err != nil {
+		done = step(2, "跨期比对")
+		err = History(o.Task.Key, o.Date, st)
+		done()
+		if err != nil {
 			// 首期没有历史是正常的，不该因此整档不跑
 			fmt.Fprintf(out, "  跨期比对跳过：%v\n", err)
 		}
@@ -84,8 +92,9 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		fmt.Fprintf(out, "[%s] 跳过采集，直接用已有数据\n", o.Task.Key)
 	}
 
-	step(3, "模型分析")
+	done := step(3, "模型分析")
 	ar, err := Analyze(ctx, o.Task, o.Date, o.Cfg, o.Root, o.Home, out, o.Engine)
+	done()
 	res.Engine, res.Failure, res.Output = ar.Engine, ar.Failure, ar.Output
 	if err != nil {
 		res.Duration = time.Since(start)
@@ -100,15 +109,18 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		return res, nil
 	}
 
-	step(4, "翻译")
-	if err := Translate(ctx, o.Root, o.Date, o.Cfg, out); err != nil {
+	done = step(4, "翻译")
+	err = Translate(ctx, o.Root, o.Date, o.Cfg, out)
+	done()
+	if err != nil {
 		// 翻译失败不该让今天的简体站也发不出去
 		fmt.Fprintf(out, "  翻译失败，英文版本将缺这一天：%v\n", err)
 	}
 
-	step(5, "建站 + 自检")
+	done = step(5, "建站 + 自检")
 	localDir, publicDir, err := Site(o.Root, o.Cfg, out)
 	if err != nil {
+		done()
 		res.Duration = time.Since(start)
 		return res, err
 	}
@@ -117,15 +129,19 @@ func Run(ctx context.Context, o Options) (Result, error) {
 		dirs = append(dirs, publicDir)
 	}
 	if err := LeakCheck(o.Root, o.Cfg, dirs...); err != nil {
+		done()
 		res.Duration = time.Since(start)
 		return res, err
 	}
+	done()
 
-	step(6, "发布")
+	done = step(6, "发布")
 	if err := Publish(ctx, o.Root, publicDir, o.Cfg, o.DryPublish, out); err != nil {
+		done()
 		res.Duration = time.Since(start)
 		return res, fmt.Errorf("发布失败: %w", err)
 	}
+	done()
 
 	res.Duration = time.Since(start)
 	fmt.Fprintf(out, "===== %s %s 完成，用时 %s =====\n",

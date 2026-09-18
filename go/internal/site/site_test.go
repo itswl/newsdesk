@@ -68,6 +68,71 @@ func TestBuildProducesCorePages(t *testing.T) {
 	}
 }
 
+// 全站重建不应把没有变化的历史页标成当前时刻；页脚跟随该页最新报告。
+func TestPageGenerationTimeFollowsContent(t *testing.T) {
+	root := fixture(t, "2026-09-15", "2026-09-16")
+	old := time.Date(2026, 9, 15, 10, 0, 0, 0, time.Local)
+	newer := time.Date(2026, 9, 16, 11, 0, 0, 0, time.Local)
+	for _, name := range []string{"ai-news.md", "douban.md"} {
+		p := filepath.Join(root, "reports", "2026-09-15", name)
+		if err := os.Chtimes(p, old, old); err != nil {
+			t.Fatal(err)
+		}
+		p = filepath.Join(root, "reports", "2026-09-16", name)
+		if err := os.Chtimes(p, newer, newer); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := build(t, Options{Root: root})
+	for _, tc := range []struct {
+		page string
+		want string
+	}{
+		{"2026-09-15.html", old.Format("2006-01-02 15:04")},
+		{"2026-09-16.html", newer.Format("2006-01-02 15:04")},
+	} {
+		body := read(t, filepath.Join(out, tc.page))
+		if !strings.Contains(body, "本栏内容更新于 "+tc.want) {
+			t.Errorf("%s 应使用页面内容更新时间 %s", tc.page, tc.want)
+		}
+	}
+}
+
+func TestEachPaneUsesItsOwnReportTime(t *testing.T) {
+	root := fixture(t, "2026-09-18")
+	aiAt := time.Date(2026, 9, 18, 6, 40, 0, 0, time.Local)
+	doubanAt := time.Date(2026, 9, 18, 11, 40, 0, 0, time.Local)
+	ai := filepath.Join(root, "reports", "2026-09-18", "ai-news.md")
+	douban := filepath.Join(root, "reports", "2026-09-18", "douban.md")
+	if err := os.Chtimes(ai, aiAt, aiAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(douban, doubanAt, doubanAt); err != nil {
+		t.Fatal(err)
+	}
+	body := read(t, filepath.Join(build(t, Options{Root: root}), "2026-09-18.html"))
+	for _, tc := range []struct {
+		pane string
+		want string
+	}{
+		{"p-ai", aiAt.Format("2006-01-02 15:04")},
+		{"p-douban", doubanAt.Format("2006-01-02 15:04")},
+	} {
+		start := strings.Index(body, `id="`+tc.pane+`"`)
+		if start < 0 {
+			t.Fatalf("缺少栏目 %s", tc.pane)
+		}
+		end := strings.Index(body[start:], `</section>`)
+		if end < 0 {
+			t.Fatalf("栏目 %s 未闭合", tc.pane)
+		}
+		section := body[start : start+end]
+		if !strings.Contains(section, "本栏内容更新于 "+tc.want) {
+			t.Errorf("%s 应显示自己的更新时间 %s", tc.pane, tc.want)
+		}
+	}
+}
+
 // 没有对外地址就不该生成 feed——feed 里的链接必须是绝对地址，
 // 拿相对地址糊弄出来的 feed 在阅读器里每一条都点不开。
 func TestNoFeedWithoutSiteURL(t *testing.T) {
@@ -367,7 +432,7 @@ func TestFeedCoverageMatchesSite(t *testing.T) {
 func TestPageCarriesGenerationTime(t *testing.T) {
 	root := fixture(t, "2026-09-17")
 	out := build(t, Options{Root: root, SiteURL: "https://x.example.com"})
-	reTime := regexp.MustCompile(`本页生成于 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \(UTC[+-]\d{2}:\d{2}\)`)
+	reTime := regexp.MustCompile(`本栏内容更新于 (\d{4}-\d{2}-\d{2} \d{2}:\d{2}) \(UTC[+-]\d{2}:\d{2}\)`)
 
 	for _, page := range []string{"index.html", "2026-09-17.html"} {
 		body := read(t, filepath.Join(out, page))
@@ -394,11 +459,11 @@ func TestPageCarriesGenerationTime(t *testing.T) {
 	// 三语各自成文，繁体由简体现转。英文要有当天的译文才生成（语言筛选）
 	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
 	en := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.En}), "index.html"))
-	if !strings.Contains(en, `<div class="src gen">Page generated at `) {
+	if !strings.Contains(en, `<div class="src gen">Section content updated at `) {
 		t.Error("英文版缺生成时刻标注或位置不对")
 	}
 	tw := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.ZhTW}), "index.html"))
-	if !strings.Contains(tw, `<div class="src gen">本頁生成於`) {
+	if !strings.Contains(tw, `<div class="src gen">本欄內容更新於`) {
 		t.Error("繁体版缺生成时刻标注或位置不对")
 	}
 }
