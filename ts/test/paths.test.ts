@@ -16,9 +16,17 @@ test('白名单放行站点自己的产出', () => {
   }
 });
 
+test('白名单放行图标与 webapp 清单', () => {
+  for (const p of ['/icon.svg', '/icon-192.png', '/apple-touch-icon.png', '/favicon.ico',
+                   '/manifest.webmanifest', '/en/icon-512.png', '/zh-TW/manifest.webmanifest']) {
+    assert.ok(allowed(p), `${p} 应放行`);
+  }
+});
+
 test('白名单挡住目录遍历与桶里的其他前缀', () => {
   for (const p of ['/../secrets.json', '/a/b/c.html', '/reports/2026-09-17/ai-news.md',
-                   '/index.php', '/.env', '/en/../../x.html', '/data/douban/list.json']) {
+                   '/index.php', '/.env', '/en/../../x.html', '/data/douban/list.json',
+                   '/icon.js', '/en/sub/icon.png', '/apple-touch-icon.webp']) {
     assert.ok(!allowed(p), `${p} 不该放行`);
   }
 });
@@ -34,6 +42,24 @@ test('按扩展名给 content-type', () => {
   assert.equal(contentType('feed.xml'), 'application/atom+xml; charset=utf-8');
   assert.equal(contentType('status.json'), 'application/json; charset=utf-8');
   assert.equal(contentType('index.html'), 'text/html; charset=utf-8');
+});
+
+// 这几种打错类型同样是静默失败：清单类型不对 Chrome 不装成应用（只是普通书签），
+// 图标类型不对则直接不显示，两者都不会报错、页面也照常打开。
+test('图标与清单的 content-type 不能退回 text/html', () => {
+  assert.equal(contentType('manifest.webmanifest'), 'application/manifest+json; charset=utf-8');
+  assert.equal(contentType('icon.svg'), 'image/svg+xml');
+  assert.equal(contentType('apple-touch-icon.png'), 'image/png');
+  assert.equal(contentType('favicon.ico'), 'image/x-icon');
+  assert.equal(contentType('en/manifest.webmanifest'), 'application/manifest+json; charset=utf-8');
+});
+
+// 每个页面都引用图标，站点每天重建四次，没必要每次回源；但也不能留太久——
+// 回源跳会把 404 一起缓存住，发布后得等它过期才自愈
+test('图标缓存比页面久一点，但别超过十分钟', () => {
+  assert.ok(ttlFor('icon-192.png') > ttlFor('2026-09-17.html'));
+  assert.ok(ttlFor('icon-192.png') <= 600, '太长的话误缓存的 404 要等很久才消失');
+  assert.equal(ttlFor('en/apple-touch-icon.png'), ttlFor('apple-touch-icon.png'));
 });
 
 // status.json 是给外部监控轮询的，缓存久了「陈旧」本身就被 CDN 藏起来了

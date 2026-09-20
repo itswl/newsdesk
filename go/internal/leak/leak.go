@@ -39,7 +39,10 @@ var shapes = []struct {
 }
 
 // 只扫文本产出。图片之类里的字节序列碰巧命中没有意义。
-var scanExt = map[string]bool{".md": true, ".html": true, ".xml": true, ".json": true, ".txt": true}
+// 扫的是「会公开发布、且内容来自模型或配置」的那几类文本。图标那种二进制不在此列；
+// .webmanifest 是站点产出的一部分（webapp 清单），跟 .json 一样按文本扫。
+var scanExt = map[string]bool{".md": true, ".html": true, ".xml": true, ".json": true,
+	".txt": true, ".webmanifest": true}
 
 // Scan 扫若干目录。secrets 是配置里的真实值（太短的不要——空值或 none 会命中一切）。
 func Scan(dirs []string, secrets map[string]string) []Hit {

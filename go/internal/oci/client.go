@@ -174,6 +174,16 @@ func ContentType(name string) string {
 		return "text/css; charset=utf-8"
 	case ".js":
 		return "application/javascript; charset=utf-8"
+	case ".png":
+		return "image/png"
+	case ".svg":
+		return "image/svg+xml"
+	case ".ico":
+		return "image/x-icon"
+	case ".webmanifest":
+		// 系统 mime 表里不一定有它（本机就没有），落到下面的兜底会变成
+		// octet-stream——桶里的元数据是小事，但别让它和 Worker 报的对不上
+		return "application/manifest+json; charset=utf-8"
 	}
 	if t := mime.TypeByExtension(filepath.Ext(name)); t != "" {
 		return t

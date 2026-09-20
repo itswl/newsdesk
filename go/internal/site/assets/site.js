@@ -48,7 +48,20 @@ document.onkeydown=function(e){
   var tg=document.getElementById('theme');
   function sysLight(){return matchMedia('(prefers-color-scheme:light)').matches}
   function now(){return document.documentElement.dataset.theme || (sysLight()?'light':'dark')}
-  function paint(){if(tg) tg.textContent = now()==='light' ? '☾' : '☀'}
+  // 状态栏／地址栏的颜色。<head> 里两条 meta 是按系统偏好分流的，媒体查询认不出
+  // 「手动选过主题」这件事——浅色页面配着深色状态栏，在手机上很扎眼。所以手动
+  // 选过之后由 JS 改写这两条并摘掉 media。颜色从 CSS 变量取，不再抄一份色值。
+  function color(){
+    var c=getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
+    if(!c) return;
+    document.querySelectorAll('meta[name=theme-color]').forEach(function(m){
+      m.removeAttribute('media'); m.setAttribute('content',c);
+    });
+  }
+  function paint(){
+    if(tg) tg.textContent = now()==='light' ? '☾' : '☀';
+    if(document.documentElement.dataset.theme) color();  // 没手动选过就别插手
+  }
   paint();
   if(tg) tg.onclick=function(){
     var next = now()==='light' ? 'dark' : 'light';

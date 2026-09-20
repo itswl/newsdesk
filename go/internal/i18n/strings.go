@@ -41,6 +41,10 @@ var s = map[string][2]string{
 	"site.feed_sub": {"AI 新闻 · GitHub Trending · 摸摸鱼热榜 · 豆瓣电影",
 		"AI News · GitHub Trending · Momoyu Hot List · Douban Films"},
 
+	// 手机主屏图标底下的名字。主屏只给十几个字的位置，英文尤其不能长，
+	// 所以这里比 site.name 短——超出会被截成「Daily Brief…」。
+	"app.short": {"每日简报", "Daily Brief"},
+
 	"panel.ai":       {"AI 简报", "AI News"},
 	"panel.trending": {"GitHub Trending", "GitHub Trending"},
 	"panel.momoyu":   {"摸摸鱼热榜", "Momoyu Hot List"},

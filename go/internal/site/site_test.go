@@ -2,6 +2,9 @@ package site
 
 import (
 	"encoding/json"
+	"fmt"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -465,5 +468,186 @@ func TestPageCarriesGenerationTime(t *testing.T) {
 	tw := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.ZhTW}), "index.html"))
 	if !strings.Contains(tw, `<div class="src gen">本欄內容更新於`) {
 		t.Error("繁体版缺生成时刻标注或位置不对")
+	}
+}
+
+// ── 图标与 webapp ──
+
+func decodePNG(t *testing.T, p string) image.Image {
+	t.Helper()
+	f, err := os.Open(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	img, err := png.Decode(f)
+	if err != nil {
+		t.Fatalf("%s 不是合法 PNG: %v", filepath.Base(p), err)
+	}
+	return img
+}
+
+// 加到主屏用到的那几样。这类东西本地看不出问题：没有报错、页面照常打开，
+// 只有真机上主屏多一个丑图标。
+func TestWebappAssets(t *testing.T) {
+	out := build(t, Options{Root: fixture(t, "2026-09-17"), SiteURL: "https://news.example.com"})
+	for _, f := range []string{
+		"favicon.ico", "icon.svg", "icon-32.png", "apple-touch-icon.png",
+		"icon-192.png", "icon-512.png", "icon-maskable-512.png", "manifest.webmanifest",
+	} {
+		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
+			t.Errorf("缺 %s", f)
+		}
+	}
+
+	// 尺寸对不上 iOS 会自己缩放，边缘发虚；四角透明的话会被填成黑块
+	for _, tc := range []struct {
+		name string
+		size int
+	}{{"apple-touch-icon.png", 180}, {"icon-32.png", 32}, {"icon-192.png", 192}, {"icon-512.png", 512}} {
+		img := decodePNG(t, filepath.Join(out, tc.name))
+		if b := img.Bounds(); b.Dx() != tc.size || b.Dy() != tc.size {
+			t.Errorf("%s 应为 %d×%d，实际 %d×%d", tc.name, tc.size, tc.size, b.Dx(), b.Dy())
+		}
+		if _, _, _, a := img.At(0, 0).RGBA(); a != 0xffff {
+			t.Errorf("%s 四角是透明的，iOS 会给它垫上黑色", tc.name)
+		}
+	}
+
+	// 矢量版是给浏览器标签页与桌面书签的，得是能解析的 SVG
+	if s := read(t, filepath.Join(out, "icon.svg")); !strings.HasPrefix(s, "<svg ") ||
+		!strings.HasSuffix(s, "</svg>") || strings.Contains(s, "<script") {
+		t.Error("icon.svg 不像一份自洽的矢量图")
+	}
+}
+
+// Android 的自适应图标按自己的形状裁切，只保证中心 80% 的圆可见：
+// maskable 那份的内容必须缩进去，否则卡片四角会被切掉。
+func TestMaskableIconIsInset(t *testing.T) {
+	out := build(t, Options{Root: fixture(t, "2026-09-17")})
+	// 卡片左边沿：标准份在 0.22、maskable 份在 0.27。取 0.25 一列正好分辨两者。
+	white := func(name string) bool {
+		img := decodePNG(t, filepath.Join(out, name))
+		b := img.Bounds()
+		r, g, bl, _ := img.At(b.Dx()/4, b.Dy()/2).RGBA()
+		return r > 0xf000 && g > 0xf000 && bl > 0xf000
+	}
+	if !white("icon-512.png") {
+		t.Error("标准份在这一列应该是白色卡片")
+	}
+	if white("icon-maskable-512.png") {
+		t.Error("maskable 份这里仍是卡片，说明内容没有缩进安全区")
+	}
+}
+
+// 清单里的图标必须与真实产出一一对得上：对不上浏览器静默丢掉那一条，
+// 「加到主屏」就退回默认图标或首字母，同样不报错。
+func TestManifestMatchesRealFiles(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	// 英文站只列有译文的那几天，没有译文就连目录都不生成
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
+	out := build(t, Options{Root: root, Lang: i18n.En})
+	var m struct {
+		Name        string `json:"name"`
+		ShortName   string `json:"short_name"`
+		Lang        string `json:"lang"`
+		StartURL    string `json:"start_url"`
+		Scope       string `json:"scope"`
+		Display     string `json:"display"`
+		ThemeColor  string `json:"theme_color"`
+		Description string `json:"description"`
+		Icons       []struct {
+			Src     string `json:"src"`
+			Sizes   string `json:"sizes"`
+			Type    string `json:"type"`
+			Purpose string `json:"purpose"`
+		} `json:"icons"`
+	}
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(out, "manifest.webmanifest"))), &m); err != nil {
+		t.Fatalf("清单不是合法 JSON: %v", err)
+	}
+	if m.Display != "standalone" {
+		t.Errorf("display 应为 standalone，实际 %q", m.Display)
+	}
+	// scope 写死 "/"：默认值是清单所在目录，那样 /en/ 装出来的应用点语言切换
+	// 会跳出应用到浏览器
+	if m.Scope != "/" {
+		t.Errorf(`scope 应为 "/"，实际 %q`, m.Scope)
+	}
+	if m.StartURL != "." {
+		t.Errorf(`start_url 应为 "."（相对清单自身解析），实际 %q`, m.StartURL)
+	}
+	// 清单里的名字跟着语言走，不是三语共用一份
+	if m.Name != "Daily Briefing" || m.Lang != "en" {
+		t.Errorf("英文站清单的 name/lang 不对：%q / %q", m.Name, m.Lang)
+	}
+	if m.ThemeColor == "" || m.Description == "" {
+		t.Error("清单缺 theme_color 或 description")
+	}
+	if len(m.Icons) == 0 {
+		t.Fatal("清单里没有图标")
+	}
+	for _, ic := range m.Icons {
+		img := decodePNG(t, filepath.Join(out, ic.Src))
+		var w int
+		if _, err := fmt.Sscanf(ic.Sizes, "%dx", &w); err != nil {
+			t.Fatalf("%s 的 sizes 读不出来：%q", ic.Src, ic.Sizes)
+		}
+		if got := img.Bounds().Dx(); got != w {
+			t.Errorf("%s 标称 %s，实际 %dpx", ic.Src, ic.Sizes, got)
+		}
+		if ic.Type != "image/png" {
+			t.Errorf("%s 的类型写成了 %q", ic.Src, ic.Type)
+		}
+	}
+}
+
+// iOS 只认 apple-touch-icon 与那几个 apple- 前缀的 meta，Android 只认 manifest。
+// 两套都得在每一页的 head 里——漏一套的话只有一半设备受影响，而且不报错。
+func TestHeadCarriesBothWebappFlavours(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	out := build(t, Options{Root: root, SiteURL: "https://news.example.com"})
+	for _, p := range []string{"index.html", "2026-09-17.html", "archive.html"} {
+		body := read(t, filepath.Join(out, p))
+		for _, want := range []string{
+			`rel="apple-touch-icon" href="apple-touch-icon.png"`,
+			`rel="manifest" href="manifest.webmanifest"`,
+			`name="apple-mobile-web-app-capable"`,
+			`name="apple-mobile-web-app-title"`,
+			`name="theme-color"`,
+			`rel="icon" href="icon.svg"`,
+			// 不写 viewport-fit=cover 的话 CSS 里那些 env(safe-area-inset-*) 恒为 0，
+			// 底部给 Home 指示条留白那行等于没写
+			`viewport-fit=cover`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s 的 head 里缺 %s", p, want)
+			}
+		}
+	}
+	// 图标是相对路径引用的，语言子目录下必须也有一份，否则 /en/ 的页面全指到上一级
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
+	en := build(t, Options{Root: root, Lang: i18n.En})
+	for _, f := range []string{"apple-touch-icon.png", "manifest.webmanifest", "icon.svg"} {
+		if _, err := os.Stat(filepath.Join(en, f)); err != nil {
+			t.Errorf("语言子目录里缺 %s", f)
+		}
+	}
+}
+
+// 图标画的是同一份几何量，只是尺寸不同——换个尺寸就画歪的话，多半是缩放算错了。
+func TestIconScalesWithSize(t *testing.T) {
+	for _, img := range []image.Image{iconImage(64, 1), iconImage(256, 1)} {
+		b := img.Bounds()
+		// 卡片左内边距那一列：卡片在，三条横线不在（它们从 0.31 才开始）
+		r, g, bl, _ := img.At(b.Dx()/4, b.Dy()/2).RGBA()
+		if r < 0xf000 || g < 0xf000 || bl < 0xf000 {
+			t.Errorf("%dpx 的卡片位置上不是白色：%04x %04x %04x", b.Dx(), r, g, bl)
+		}
+		// 画布角上是渐变底色，不能被卡片盖住：深蓝意味着蓝通道最高
+		r, g, bl, _ = img.At(0, 0).RGBA()
+		if !(bl > r && bl > g) {
+			t.Errorf("%dpx 的左上角不是深蓝底色：%04x %04x %04x", b.Dx(), r, g, bl)
+		}
 	}
 }

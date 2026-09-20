@@ -60,6 +60,44 @@ func (b *Builder) keepNote() string {
 	return b.T("keep.note", len(b.days))
 }
 
+// headIcons 图标与「加到主屏」相关的元信息。
+//
+// 分成两套是有原因的，别删其中一套：
+//
+//	iOS      只认 apple-touch-icon、apple-mobile-web-app-* 那几个 meta，
+//	         没有 apple-touch-icon 就拿页面截图当图标——「很丑」就从这来
+//	Android  只认 manifest，上面那些 apple- 前缀的东西它全部忽略
+//
+// 路径都是相对的：同一份 HTML 在根目录和 /<lang>/ 下都成立，所以每个语言目录
+// 里都有一份图标（见 writeAssets）。
+func (b *Builder) headIcons() string {
+	const (
+		favicon = `<link rel="icon" href="favicon.ico" sizes="32x32">` +
+			`<link rel="icon" href="icon.svg" type="image/svg+xml">` +
+			`<link rel="apple-touch-icon" href="apple-touch-icon.png">` +
+			`<link rel="manifest" href="manifest.webmanifest">`
+		// 状态栏／地址栏取色，按系统偏好二选一；手动切换主题时由 JS 改写
+		// （media 只认系统偏好，选过之后页面和状态栏会反过来）。
+		themeColor = `<meta name="theme-color" content="` + themeBgDark + `" media="(prefers-color-scheme: dark)">` +
+			`<meta name="theme-color" content="` + themeBgLight + `" media="(prefers-color-scheme: light)">`
+		// 以独立窗口打开，不带浏览器地址栏。iOS 认 apple- 那个，Android 走清单。
+		standalone = `<meta name="apple-mobile-web-app-capable" content="yes">` +
+			`<meta name="mobile-web-app-capable" content="yes">`
+		// default 而不是 black-translucent：后者让页面顶到状态栏下面，状态栏文字
+		// 恒为白色，浅色主题下白字压在浅色页头上直接看不见。代价是不铺到状态栏
+		// 底下，换来两套主题都不会出现读不出的状态栏。
+		statusBar = `<meta name="apple-mobile-web-app-status-bar-style" content="default">`
+		// 报告里成串的数字会被 iOS 认成电话号码，变成蓝色链接
+		noPhone = `<meta name="format-detection" content="telephone=no">`
+	)
+	return favicon + themeColor + standalone + statusBar + noPhone +
+		fmt.Sprintf(`<meta name="apple-mobile-web-app-title" content="%s">`, esc(b.T("app.short")))
+}
+
+// viewport 里的 viewport-fit=cover 是必需的：不写的话整页不铺到安全区，
+// site.css 里那些 env(safe-area-inset-*) 全是 0——那几行等于没写。
+const viewport = `<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">`
+
 // headLinks feed 与语言互链。hreflang 声明三语互为同一内容的不同版本，
 // 否则三个站会被搜索引擎当成互相抄袭的重复内容。
 func (b *Builder) headLinks(page string) string {
@@ -223,12 +261,12 @@ func (b *Builder) writeDay(day string) error {
 	}
 
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
-		`<meta name="viewport" content="width=device-width,initial-scale=1">`+
-		`<title>%s %s</title>%s%s<style>%s</style></head><body>`+
+		viewport+`<title>%s %s</title>%s%s%s<style>%s</style></head><body>`+
 		`<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>`+
 		`<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s`+
 		`<footer class="dis">%s%s</footer></main><script>%s</script></body></html>`,
-		i18n.HTMLLang(b.o.Lang), esc(b.T("site.name")), day, headJS, b.headLinks(day+".html"), css,
+		i18n.HTMLLang(b.o.Lang), esc(b.T("site.name")), day,
+		b.headIcons(), b.headLinks(day+".html"), headJS, css,
 		esc(b.T("site.name")), day, latest, b.nav(day), status,
 		tabs.String(), main, note, b.disclaimer(), js)
 
@@ -292,14 +330,14 @@ func (b *Builder) writeArchive() error {
 		note = fmt.Sprintf(`<p class="keep">%s</p>`, esc(b.keepNote()))
 	}
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
-		`<meta name="viewport" content="width=device-width,initial-scale=1">`+
-		`<title>%s</title>%s%s<style>%s</style></head><body>`+
+		viewport+`<title>%s</title>%s%s%s<style>%s</style></head><body>`+
 		`<header><div class="bar"><h1 class="site">%s · %s %s</h1>`+
 		`<div class="nav"><a href="index.html">%s</a>%s`+
 		`<button class="tg" id="theme" title="%s">☀</button></div></div></header>`+
 		`<main>%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>`+
 		`<footer class="dis">%s<p class="gen">%s</p></main><script>%s</script></body></html>`,
-		i18n.HTMLLang(b.o.Lang), esc(b.T("site.archive")), headJS, b.headLinks("archive.html"), css,
+		i18n.HTMLLang(b.o.Lang), esc(b.T("site.archive")),
+		b.headIcons(), b.headLinks("archive.html"), headJS, css,
 		esc(b.T("site.archive")), esc(scope), esc(b.T("arch.days", len(b.days))),
 		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")),
 		note, esc(b.T("arch.date")), esc(b.T("arch.reports")), rows.String(),

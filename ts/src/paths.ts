@@ -13,7 +13,11 @@ export function normalize(pathname: string): string {
 
 // 允许一层语言子目录（/en/2026-09-16.html）。只放行单层，不给目录遍历留口子：
 // 段里不含 `/`，`..` 因为不带扩展名也进不来。
-const ALLOW = /^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(?:html|xml|json)$/;
+//
+// ⚠️ 站点新增一种对外文件类型时，这里与 contentType、以及 Go 那边的产出
+// （site.writeAssets 一带）要一起改。漏了这里的话图标在桶里躺着但取不到——
+// 表现是「加到主屏还是老样子」，本地怎么看都看不出问题。
+const ALLOW = /^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(?:html|xml|json|webmanifest|svg|png|ico)$/;
 
 export function allowed(path: string): boolean {
   return ALLOW.test(path);
@@ -28,8 +32,18 @@ const TTL: Record<string, number> = {
 };
 const TTL_DEFAULT = 300;
 
+// 图标与清单只有改设计时才变，可以比页面留久一点。
+//
+// ⚠️ 但别留太久：回源那一跳是缓存的，**404 会被一起缓存**——发布前探过一次的
+// 路径，发布之后仍会返回 404，直到这一档过期。实测踩过：三个路径白等一小时。
+// 10 分钟足够省掉重复回源，又让这类错误自己愈合。
+const TTL_ICON = 600;
+const ICON_EXT = /\.(?:png|svg|ico|webmanifest)$/;
+
 export function ttlFor(name: string): number {
-  return TTL[name.split('/').pop()!] ?? TTL_DEFAULT;
+  const base = name.split('/').pop()!;
+  if (ICON_EXT.test(base)) return TTL_ICON;
+  return TTL[base] ?? TTL_DEFAULT;
 }
 
 /**
@@ -41,5 +55,11 @@ export function ttlFor(name: string): number {
 export function contentType(name: string): string {
   if (name.endsWith('.xml')) return 'application/atom+xml; charset=utf-8';
   if (name.endsWith('.json')) return 'application/json; charset=utf-8';
+  // 清单必须是 manifest+json：打错类型 Chrome 直接忽略，而且不报错，只是
+  // 「加到主屏」变成普通书签（没有图标、没有独立窗口）
+  if (name.endsWith('.webmanifest')) return 'application/manifest+json; charset=utf-8';
+  if (name.endsWith('.svg')) return 'image/svg+xml';
+  if (name.endsWith('.png')) return 'image/png';
+  if (name.endsWith('.ico')) return 'image/x-icon';
   return 'text/html; charset=utf-8';
 }

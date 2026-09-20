@@ -47,7 +47,9 @@ html[data-theme=light]{
 }
 
 *{box-sizing:border-box}
-html{-webkit-text-size-adjust:100%}
+/* html 上也要给底色：手滑拉到尽头时回弹露出来的是根元素的背景，不是 body 的，
+   不写就会在页面上下各闪一条白边 */
+html{-webkit-text-size-adjust:100%;background:var(--bg)}
 body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
   font:16.5px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
        "Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
@@ -55,9 +57,17 @@ body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
 
 /* 表头随内容滚走，只留 Tab 条吸顶——Tab 是唯一高频操作，日期导航和状态条
    看一眼就够，常驻会在手机上白占四分之一屏。 */
-header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px}
+/* 安全区：刘海屏横屏时左右各被系统占掉 44px，底部小横条 34px，内容压进去就点不到。
+   每条都先写一条不带 env() 的兜底——不认 env() 的浏览器会把后一条整条丢掉，
+   只剩前一条，正好是加安全区之前的样子。env() 为 0 时（没有刘海、竖屏）
+   max() 取的是前面那个值，等于没写。 */
+header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px;
+  padding-left:max(24px,env(safe-area-inset-left,0px));
+  padding-right:max(24px,env(safe-area-inset-right,0px))}
 .tabbar{position:sticky;top:0;z-index:9;background:var(--bg2);
-  border-bottom:1px solid var(--bd);padding:9px 24px}
+  border-bottom:1px solid var(--bd);padding:9px 24px;
+  padding-left:max(24px,env(safe-area-inset-left,0px));
+  padding-right:max(24px,env(safe-area-inset-right,0px))}
 .bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
   max-width:860px;margin:0 auto 10px}
 h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:.02em}
@@ -80,9 +90,18 @@ h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:
   padding:1px 6px;border-radius:5px;margin-left:6px}
 .tab.absent{opacity:.3;cursor:not-allowed;text-decoration:line-through}
 
+/* 触屏三点：:hover 在手机上要么不触发、要么触发后粘住不消失，所以补一个显式的
+   按下态；iOS 默认那层半透明高亮压在按钮上会把文字糊掉，去掉；touch-action
+   消掉双击缩放的等待，快速连点两个 Tab 不会再吞掉第一次。 */
+.tab,.nav a,.nav button.tg,.nav select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.tab:not(.on):active,.nav a:active,.nav button.tg:active{background:var(--bg4)}
+
 /* 正文宽度 760px——中文 16.5px 下约 42 字一行。原来 1000px 是 66 字，
    眼睛每行都要横扫一遍，长文读着累。表格允许在此基础上横向滚。 */
-main{max-width:760px;margin:0 auto;padding:44px 24px 96px}
+main{max-width:760px;margin:0 auto;padding:44px 24px 96px;
+  padding-left:max(24px,env(safe-area-inset-left,0px));
+  padding-right:max(24px,env(safe-area-inset-right,0px));
+  padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
 .pane{display:none}.pane.on{display:block}
 .src{color:var(--fg3);font-size:12px;margin-bottom:2px;font-family:ui-monospace,Menlo,monospace}
 .src.gen{margin-bottom:34px;opacity:.8}
@@ -113,7 +132,9 @@ blockquote p{margin:9px 0}
   background:linear-gradient(90deg,rgba(var(--fade),0),rgba(var(--fade),.95));
   pointer-events:none;opacity:0;transition:opacity .2s}
 .tw.more::after{opacity:1}
-.tw>div{overflow-x:auto;-webkit-overflow-scrolling:touch}
+/* overscroll-behavior-x 限定横滚只作用在表格里：不加的话表格滚到头，
+   继续滑会把整个页面当成「后退」手势——iOS 上很容易把看下一列表变成翻回上一页 */
+.tw>div{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
 /* 表格只留横线，去掉竖线和单元格边框——报告表格很密，四边框会让整块变成网格噪声 */
 table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
 th,td{border:0;border-bottom:1px solid var(--bd3);padding:10px 14px 10px 0;
@@ -198,8 +219,12 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 
 @media (max-width:640px){
   body{font-size:16px;line-height:1.85}
-  header{padding:12px 16px}
-  .tabbar{padding:8px 16px}
+  header{padding:12px 16px;
+    padding-left:max(16px,env(safe-area-inset-left,0px));
+    padding-right:max(16px,env(safe-area-inset-right,0px))}
+  .tabbar{padding:8px 16px;
+    padding-left:max(16px,env(safe-area-inset-left,0px));
+    padding-right:max(16px,env(safe-area-inset-right,0px))}
   .bar{gap:9px;margin-bottom:9px}
   h1.site{font-size:14.5px;width:100%}
   h1.site span{display:block;margin:2px 0 0;font-size:11px}
@@ -209,8 +234,10 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   .lang{margin-left:0;flex:0 0 auto;order:9;align-self:stretch}
   .lang b{display:none}
   .lang i{display:inline}
+  /* 44px 是 Apple 给的最小点按尺寸（原来是 38px）。日期导航与 Tab 是手机上仅有的
+     高频操作，多占这 6px 换的是不再点空。 */
   .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;
-    font-size:13px;min-height:38px;white-space:nowrap;display:flex;align-items:center;
+    font-size:13px;min-height:44px;white-space:nowrap;display:flex;align-items:center;
     justify-content:center}
   /* min-width 不能给 0：flex 会把它一路压到看不见。88px 刚好放下 09-16 加箭头 */
   .nav select{flex:1.4 1 88px;min-width:88px}
@@ -219,9 +246,12 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
      省下它约 56px，导航才挤得进一行——两行会让 header 从 133 涨到 178px。 */
   .nav a.all{display:none}
   .tabs{gap:4px}
-  .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:38px}
+  .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:44px}
   .tab em{display:none}
-  main{padding:28px 16px 64px;padding-bottom:calc(64px + env(safe-area-inset-bottom))}
+  main{padding:28px 16px 64px;
+    padding-left:max(16px,env(safe-area-inset-left,0px));
+    padding-right:max(16px,env(safe-area-inset-right,0px));
+    padding-bottom:calc(64px + env(safe-area-inset-bottom,0px))}
   .src{font-size:11px;margin-bottom:2px}
   .src.gen{margin-bottom:24px}
   h1{font-size:22px;margin-bottom:20px}
@@ -255,3 +285,9 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 .a-left{text-align:left}
 .a-center{text-align:center}
 .a-right{text-align:right}
+
+/* 系统里开了「减弱动态效果」就别再动。这几处 transition 都只是点缀，
+   关掉不影响任何信息。 */
+@media (prefers-reduced-motion:reduce){
+  a,.tab,.nav a,.nav button.tg,.tw::after{transition:none}
+}

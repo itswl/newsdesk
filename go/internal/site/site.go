@@ -63,6 +63,10 @@ func Build(o Options) error {
 	if err := os.MkdirAll(o.Out, 0o755); err != nil {
 		return err
 	}
+	// 图标与 webapp 清单不依赖日期，先写：页面里引用它们，缺了就是一堆 404
+	if err := b.writeAssets(); err != nil {
+		return err
+	}
 	for _, d := range b.days {
 		b.genAt = b.contentTime(d)
 		if err := b.writeDay(d); err != nil {
