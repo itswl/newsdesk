@@ -635,6 +635,47 @@ func TestHeadCarriesBothWebappFlavours(t *testing.T) {
 	}
 }
 
+// 导航条上的三个控件在读屏里得自报家门：日期下拉没有可见 label（占位项只是提示），
+// 主题按钮只有字形（title 在触屏上既不显示、也不是可靠的可访问名）。
+func TestNavControlsCarryAccessibleNames(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	out := build(t, Options{Root: root, SiteURL: "https://news.example.com"})
+	// 归档页没有日期下拉（它自己就是全部日期），所以只查栏目页
+	for _, p := range []string{"index.html", "2026-09-17.html"} {
+		if body := read(t, filepath.Join(out, p)); !strings.Contains(body, `<select id="daysel" aria-label="`) {
+			t.Errorf("%s 的日期下拉缺 aria-label", p)
+		}
+	}
+	for _, p := range []string{"index.html", "2026-09-17.html", "archive.html"} {
+		body := read(t, filepath.Join(out, p))
+		for _, want := range []string{
+			`id="theme"`,
+			`aria-pressed="false"`,
+			// 状态由脚本在首屏按已选主题（或系统偏好）改写
+			`setAttribute('aria-pressed'`,
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s 里缺 %s", p, want)
+			}
+		}
+	}
+}
+
+// 表格数字列要对齐、粘性 tabbar 不能盖住滚进来的元素——两条都在 CSS 里，且都不显眼。
+func TestNumericAndScrollStyles(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	out := build(t, Options{Root: root, SiteURL: "https://news.example.com"})
+	body := read(t, filepath.Join(out, "index.html"))
+	for _, want := range []string{
+		"font-variant-numeric:tabular-nums",
+		"scroll-margin-top:",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("index.html 的样式里缺 %s", want)
+		}
+	}
+}
+
 // 图标画的是同一份几何量，只是尺寸不同——换个尺寸就画歪的话，多半是缩放算错了。
 func TestIconScalesWithSize(t *testing.T) {
 	for _, img := range []image.Image{iconImage(64, 1), iconImage(256, 1)} {

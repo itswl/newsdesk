@@ -59,7 +59,13 @@ document.onkeydown=function(e){
     });
   }
   function paint(){
-    if(tg) tg.textContent = now()==='light' ? '☾' : '☀';
+    if(tg){
+      var light = now()==='light';
+      tg.textContent = light ? '☾' : '☀';
+      // 按下的含义固定为「深色模式已生效」：服务端渲染时还不知道读者选过什么，
+      // 由这里在首屏补上；读屏才会报出 toggle button 的当前状态。
+      tg.setAttribute('aria-pressed', light ? 'false' : 'true');
+    }
     if(document.documentElement.dataset.theme) color();  // 没手动选过就别插手
   }
   paint();

@@ -69,7 +69,10 @@ func inline(s string) string {
 	s = inlineEmphEscaped(s)
 
 	for i, c := range codes {
-		s = strings.ReplaceAll(s, fmt.Sprintf("\x00C%d\x00", i), "<code>"+escape(c)+"</code>")
+		// translate="no"：行内代码是标识符、路径、参数名，浏览器自动翻译会把它
+		// 翻成另一种语言的词，读者照抄就错。
+		s = strings.ReplaceAll(s, fmt.Sprintf("\x00C%d\x00", i),
+			`<code translate="no">`+escape(c)+"</code>")
 	}
 	for i, l := range links {
 		s = strings.ReplaceAll(s, fmt.Sprintf("\x00L%d\x00", i), l)

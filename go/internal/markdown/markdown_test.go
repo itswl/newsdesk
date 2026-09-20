@@ -20,8 +20,8 @@ var allowedTags = map[string]bool{
 	"a": true,
 }
 
-// 渲染器只会产出这三个属性：链接的 href/rel、表格对齐的 class
-var allowedAttrs = map[string]bool{"href": true, "rel": true, "class": true}
+// 渲染器只会产出这四个属性：链接的 href/rel、表格对齐的 class、代码的 translate
+var allowedAttrs = map[string]bool{"href": true, "rel": true, "class": true, "translate": true}
 
 var reTag = regexp.MustCompile(`<(/?)([a-zA-Z][a-zA-Z0-9]*)((?:\s[^<>]*)?)/?>`)
 var reAttr = regexp.MustCompile(`([a-zA-Z-]+)\s*=`)
@@ -115,8 +115,8 @@ func TestBlocks(t *testing.T) {
 		"**粗**":         "<strong>粗</strong>",
 		"*斜*":           "<em>斜</em>",
 		"~~删~~":         "<del>删</del>",
-		"`码`":           "<code>码</code>",
-		"```\nx\n```":   "<pre><code>",
+		"`码`":           `<code translate="no">码</code>`,
+		"```\nx\n```":   `<pre><code translate="no">`,
 		"```go\nx\n```": `class="language-go"`,
 	}
 	for src, want := range cases {

@@ -190,11 +190,11 @@ func (b *Builder) nav(day string) string {
 		fmt.Fprintf(&opts, `<option value="@archive">%s</option>`, esc(b.T("nav.more", len(b.days))))
 	}
 
-	return fmt.Sprintf(`<div class="nav">%s<select id="daysel">%s</select>%s`+
+	return fmt.Sprintf(`<div class="nav">%s<select id="daysel" aria-label="%s">%s</select>%s`+
 		`<a class="all" href="archive.html">%s</a>%s`+
-		`<button class="tg" id="theme" title="%s">☀</button></div>`,
-		prev, opts.String(), next, esc(b.T("nav.all", len(b.days))),
-		b.langSwitch(day+".html"), esc(b.T("nav.theme")))
+		`<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div>`,
+		prev, esc(b.T("nav.date_label")), opts.String(), next, esc(b.T("nav.all", len(b.days))),
+		b.langSwitch(day+".html"), esc(b.T("nav.theme")), esc(b.T("nav.theme")))
 }
 
 func (b *Builder) writeDay(day string) error {
@@ -333,13 +333,13 @@ func (b *Builder) writeArchive() error {
 		viewport+`<title>%s</title>%s%s%s<style>%s</style></head><body>`+
 		`<header><div class="bar"><h1 class="site">%s · %s %s</h1>`+
 		`<div class="nav"><a href="index.html">%s</a>%s`+
-		`<button class="tg" id="theme" title="%s">☀</button></div></div></header>`+
+		`<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div></div></header>`+
 		`<main>%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>`+
 		`<footer class="dis">%s<p class="gen">%s</p></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(b.T("site.archive")),
 		b.headIcons(), b.headLinks("archive.html"), headJS, css,
 		esc(b.T("site.archive")), esc(scope), esc(b.T("arch.days", len(b.days))),
-		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")),
+		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")), esc(b.T("nav.theme")),
 		note, esc(b.T("arch.date")), esc(b.T("arch.reports")), rows.String(),
 		b.disclaimer(), b.genNote(), js)
 	return os.WriteFile(filepath.Join(b.o.Out, "archive.html"), []byte(doc), 0o644)

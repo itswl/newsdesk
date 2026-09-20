@@ -91,7 +91,8 @@ func fence(b *strings.Builder, lines []string, i int) int {
 		// 语言名也要转义：它来自源文本
 		cls = fmt.Sprintf(` class="language-%s"`, escape(lang))
 	}
-	fmt.Fprintf(b, "<pre><code%s>%s</code></pre>\n", cls, escape(strings.Join(body, "\n")))
+	// 代码块同理：命令、配置、日志原文都不是给人翻译的。
+	fmt.Fprintf(b, `<pre><code translate="no"%s>%s</code></pre>`+"\n", cls, escape(strings.Join(body, "\n")))
 	return i
 }
 
