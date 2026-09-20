@@ -135,8 +135,10 @@ blockquote p{margin:9px 0}
 /* overscroll-behavior-x 限定横滚只作用在表格里：不加的话表格滚到头，
    继续滑会把整个页面当成「后退」手势——iOS 上很容易把看下一列表变成翻回上一页 */
 .tw>div{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
-/* 表格只留横线，去掉竖线和单元格边框——报告表格很密，四边框会让整块变成网格噪声 */
-table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65}
+/* 表格只留横线，去掉竖线和单元格边框——报告表格很密，四边框会让整块变成网格噪声。
+   数字用等宽字形：星标速率、评分、评价人数这些列要上下对齐才读得出量级差。 */
+table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65;
+  font-variant-numeric:tabular-nums}
 th,td{border:0;border-bottom:1px solid var(--bd3);padding:10px 14px 10px 0;
   text-align:left;vertical-align:top}
 th{color:var(--fg2);font-weight:600;white-space:nowrap;font-size:13px;
@@ -291,3 +293,7 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 @media (prefers-reduced-motion:reduce){
   a,.tab,.nav a,.nav button.tg,.tw::after{transition:none}
 }
+
+/* 顶部 tabbar 是 sticky 的（约 50px 高）：键盘 Tab 进正文、或将来做标题锚点时，
+   浏览器把目标滚进视口会正好压在导航条下面。给可能被滚到的元素留出余量。 */
+a,button,select,summary,[tabindex],h1,h2,h3,h4,h5,h6{scroll-margin-top:64px}

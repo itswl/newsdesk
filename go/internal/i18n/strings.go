@@ -54,7 +54,9 @@ var s = map[string][2]string{
 	"short.momoyu":   {"摸摸鱼", "Momoyu"},
 	"short.douban":   {"豆瓣", "Douban"},
 
-	"nav.jump":        {"跳到日期…", "Jump to date…"},
+	"nav.jump": {"跳到日期…", "Jump to date…"},
+	// 下拉本身没有可见 label，占位项只是提示语；读屏需要在聚焦时报出用途。
+	"nav.date_label":  {"选择日期", "Choose a date"},
 	"nav.newest_mark": {"（最新）", " (latest)"},
 	"nav.more":        {"更多历史（共 %d 天）…", "More history (%d days)…"},
 	"nav.all":         {"全部 %d 天", "All %d days"},
