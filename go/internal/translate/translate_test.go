@@ -51,7 +51,7 @@ func TestChunksAreLossless(t *testing.T) {
 }
 
 // 单个二级小节本身就超限时必须继续往下切——只按 ## 切的话那一节会原样送出去，
-// 照样被截断（Python 版实测 9.4k 字符的一节就会）。
+// 照样被截断（实测 9.4k 字符的一节就会）。
 func TestOversizedSectionIsSplitFurther(t *testing.T) {
 	src := "## 一个很长的小节\n\n" + strings.Repeat("段落内容。\n\n", 600)
 	cs := Chunks(src)

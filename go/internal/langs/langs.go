@@ -27,8 +27,8 @@ type Status struct {
 
 // deps 报告某语言的依赖是否齐备。
 //
-// zh-TW 的转换表是 go:embed 进二进制的，没有运行时依赖——Python 版那边
-// 它要装 opencc，装漏了就静默少一个语言。这里不会。
+// zh-TW 的转换表是 go:embed 进二进制的，没有运行时依赖，
+// 不会因为环境缺了什么而静默少一个语言。
 func deps(l i18n.Lang, cfg *config.Config, root string) (bool, string) {
 	switch l {
 	case i18n.ZhCN:

@@ -124,19 +124,6 @@ ts/src                 Cloudflare Worker
 prompts/               四个任务的分析契约——方法论的坑最终落在这里
 ```
 
-## 前身
-
-这套东西最早是 Python 写的：[itswl/newsdesk-archive](https://github.com/itswl/newsdesk-archive)，
-已归档在 tag `python-reference`。功能相同，那边的 `tests/` 是行为规格，
-`AGENTS.md` 是同一批约束的另一种写法。
-
-它的 README 末尾有一节把「换语言到底换到了什么」算了细账：真正由语言带来的只有
-依赖归零（这个版本是单个二进制，那个要 `.venv` 加一百多兆的 `oci` CLI），其余收益
-来自「重写」而不是「换语言」，而重写本身引入了三个新 bug、行数翻了一倍。
-
-那节给的判据是：换语言划算的情形只有一种——**依赖链本身就是故障源，而这东西要长期
-无人值守地跑**。不符合就别照抄。
-
 ## 授权
 
 代码 [MIT](LICENSE)。

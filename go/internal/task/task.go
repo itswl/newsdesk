@@ -1,8 +1,7 @@
 // Package task 定义四个任务：时刻、报告文件名、文案 key。
 //
-// Python 版里这三样散在 scheduler.py、build_site.py、run_task.sh 里，
-// 改时间表要同时改三处，还靠一段正则从 scheduler.py 里把时刻抠出来。
-// 这里是唯一事实来源。
+// 这里是唯一事实来源：这三样散落多处的话，改时间表要同时改几处，
+// 还容易漏改。
 package task
 
 import (

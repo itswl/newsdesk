@@ -1,9 +1,8 @@
 // Package config 读 config.conf。
 //
-// 格式沿用 Python 版的 KEY=value——沙箱脚本还要 shell source 它，换成 TOML/YAML
-// 就没法直接 source 了。但实现只此一份：Python 版有六份 _conf() 加三处 shell
-// source，语义还不一致（重复键 Python 取第一个、shell 取最后一个），换网关时
-// 因此读到过两个不同的端点。这里重复键直接报错，不猜。
+// 格式是 KEY=value——沙箱脚本还要 shell source 它，换成 TOML/YAML 就没法直接
+// source 了。但解析只此一份，不存在第二份语义可能漂移的实现；重复键直接
+// 报错，不猜「取第一个还是最后一个」。
 package config
 
 import (
@@ -50,8 +49,8 @@ func Load(path string) (*Config, error) {
 		}
 		k = strings.TrimSpace(k)
 		v = strings.Trim(strings.TrimSpace(v), `"'`)
-		// 重复键必须报错。Python 版在这里是静默的，而两个消费方的取值方向
-		// 相反（第一个 vs 最后一个），排查时会看到两个组件读到不同的值。
+		// 重复键必须报错。静默取其一的话，Go 与 shell source 两个消费方的
+		// 取值方向相反（第一个 vs 最后一个），排查时会看到两个组件读到不同的值。
 		if prev, dup := seen[k]; dup {
 			return nil, fmt.Errorf("%s:%d 重复的键 %s（已在第 %d 行出现）", path, line, k, prev)
 		}

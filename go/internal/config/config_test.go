@@ -56,9 +56,9 @@ EMPTY=
 	}
 }
 
-// 这条是这个包存在的理由。Python 版有六份解析器加三处 shell source，
-// 重复键时 Python 取第一个、shell 取最后一个——换网关时两个组件因此读到了
-// 不同的端点，而且完全静默。
+// 这条是这个包存在的理由：解析若静默取值，Go 与 shell source 对重复键的
+// 取值方向相反（第一个 vs 最后一个），换网关时两个组件会读到不同的端点，
+// 而且完全无声。
 func TestDuplicateKeyIsAnError(t *testing.T) {
 	_, err := Load(write(t, "FALLBACK_MODEL=new\nFALLBACK_MODEL=old\n"))
 	if err == nil {

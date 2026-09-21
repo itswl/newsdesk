@@ -11,8 +11,8 @@ import (
 	"github.com/itswl/newsdesk/internal/store"
 )
 
-// 标签在 URL 里要 percent-encode。Python 版是写死的编码串表，
-// 这里直接编码——少一张会过期的表。
+// 标签在 URL 里要 percent-encode。这里直接编码，不维护写死的编码串表——
+// 那种表会过期。
 var doubanTags = []string{"热门", "最新", "豆瓣高分", "华语", "欧美", "日本", "韩国"}
 
 type DoubanOpts struct {
@@ -36,7 +36,7 @@ type doubanMeta struct {
 }
 
 // Douban 抓热门电影：先取列表，再逐部取详情。
-// 产物与 Python 版一致：list.json / meta.json / detail/<id>.json
+// 产物：list.json / meta.json / detail/<id>.json
 func Douban(ctx context.Context, c *Client, st *store.Store, date string, o DoubanOpts) error {
 	if o.Sort == "" {
 		o.Sort = "recommend"

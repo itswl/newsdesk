@@ -25,7 +25,7 @@ func NewClient(timeout time.Duration) *Client {
 	return &Client{HTTP: &http.Client{Timeout: timeout}, Retries: 1}
 }
 
-// Get 取一个 URL 的正文。失败返回错误而不是空串——Python 版返回空串，
+// Get 取一个 URL 的正文。失败返回错误而不是空串——返回空串的话，
 // 调用方忘了判断就会把空内容当成「今天没有数据」静默吞掉。
 func (c *Client) Get(ctx context.Context, url string, headers map[string]string) ([]byte, error) {
 	var last error

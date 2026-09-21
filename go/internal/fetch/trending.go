@@ -118,7 +118,7 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 	fmt.Printf("榜单 %d 项 -> %s/page.json\n", len(board), st.RelTo(dd))
 
 	// 追踪集合 = 今日榜 + **上一期榜单**，不是上一期快照里的全部仓库。
-	// 后者会把它自己的 prev 一并继承、逐日累积（Python 版实测 9 天涨到 49 个）。
+	// 后者会把它自己的 prev 一并继承、逐日累积（实测 9 天涨到 49 个）。
 	// 方法论上只需要「上一期在榜、今天掉了」的那些来验证掉榜=降温。
 	basePath, baseSnap := latestSnapshot(st, date)
 	var prev []string
