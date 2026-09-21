@@ -17,16 +17,34 @@ document.querySelectorAll('.tab').forEach(function(b){
   var h=location.hash.slice(1);
   if(h){var t=document.querySelector('.tab[data-t="'+h+'"]'); if(t)t.click();}
 })();
+// 换天/换档的导航共用这套反馈：先把正文压暗、等这一帧真的画出来再跳。
+// 到 Cloudflare 边缘的线路在晚高峰可能几秒才回包，而 PWA 没有地址栏进度条，
+// 不给反馈的话「点了跳转」和「死了」看起来一模一样（实测就这么被当成卡死）。
+// 推迟一帧还能避开 iOS 上选择器面板还在收起时就发起导航的偶发冻结。
+// 导航被取消（按了停止 / 回退）时由 5 秒兜底和 pageshow 把状态清掉——
+// 返回键走 bfcache 的话页面原样复活，不能带着压暗的正文。
+function leave(){
+  var d=document.documentElement; d.classList.add('leaving');
+  setTimeout(function(){d.classList.remove('leaving')},5000);
+  requestAnimationFrame(function(){requestAnimationFrame(function(){d.classList.remove('leaving-wait')})});
+}
+function navTo(href){
+  leave();
+  requestAnimationFrame(function(){requestAnimationFrame(function(){location.href=href})});
+}
 var sel=document.getElementById('daysel');
 if(sel) sel.onchange=function(){
-  if(!this.value) return;                          // 停在占位项时不跳
-  if(this.value==='@archive'){location.href='archive.html';return;}
-  location.href=this.value+'.html'+location.hash;
+  var v=this.value;
+  if(!v) return;                                   // 停在占位项时不跳
+  navTo((v==='@archive'?'archive.html':v+'.html')+location.hash);
 };
+addEventListener('pageshow',function(){
+  document.documentElement.classList.remove('leaving');
+});
 
 function go(dir){
   var el=document.getElementById(dir>0?'nextday':'prevday');
-  if(el&&el.href) location.href=el.href;
+  if(el&&el.href) navTo(el.href);
 }
 // 桌面：左右方向键换天。焦点落在 tab 上时也一样——APG 的 tabs 模式要求方向键在 tab
 // 之间移动，这里有意偏离：换天是最高频的动作，而点完 tab 焦点就在它上面，若在这时
