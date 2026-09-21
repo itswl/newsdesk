@@ -194,7 +194,7 @@ func (b *Builder) nav(day string) string {
 		`<a class="all" href="archive.html">%s</a>%s`+
 		`<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div>`,
 		prev, esc(b.T("nav.date_label")), opts.String(), next, esc(b.T("nav.all", len(b.days))),
-		b.langSwitch(day+".html"), esc(b.T("nav.theme")), esc(b.T("nav.theme")))
+		b.langSwitch(day+".html"), esc(b.T("nav.theme")), esc(b.T("nav.theme_label")))
 }
 
 func (b *Builder) writeDay(day string) error {
@@ -344,7 +344,7 @@ func (b *Builder) writeArchive() error {
 		i18n.HTMLLang(b.o.Lang), esc(b.T("site.archive")),
 		b.headIcons(), b.headLinks("archive.html"), headJS, css,
 		esc(b.T("site.archive")), esc(scope), esc(b.T("arch.days", len(b.days))),
-		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")), esc(b.T("nav.theme")),
+		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")), esc(b.T("nav.theme_label")),
 		note, esc(b.T("arch.date")), esc(b.T("arch.reports")), rows.String(),
 		b.disclaimer(), b.genNote(), js)
 	return os.WriteFile(filepath.Join(b.o.Out, "archive.html"), []byte(doc), 0o644)

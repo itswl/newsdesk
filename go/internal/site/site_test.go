@@ -651,7 +651,8 @@ func TestNavControlsCarryAccessibleNames(t *testing.T) {
 		body := read(t, filepath.Join(out, p))
 		for _, want := range []string{
 			`id="theme"`,
-			`aria-pressed="false"`,
+			// 可访问名是状态名「深色模式」，aria-pressed 才读得通；动作名留在 title 里做描述
+			`title="切换深浅色" aria-label="深色模式" aria-pressed="false"`,
 			// 状态由脚本在首屏按已选主题（或系统偏好）改写
 			`setAttribute('aria-pressed'`,
 		} {

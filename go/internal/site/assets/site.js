@@ -68,8 +68,8 @@ document.onkeydown=function(e){
     if(tg){
       var light = now()==='light';
       tg.textContent = light ? '☾' : '☀';
-      // 按下的含义固定为「深色模式已生效」：服务端渲染时还不知道读者选过什么，
-      // 由这里在首屏补上；读屏才会报出 toggle button 的当前状态。
+      // 按钮的可访问名是「深色模式」，按下 = 深色已生效，读屏报「深色模式，已按下」。
+      // 服务端渲染时还不知道读者选过什么，由这里在首屏补上，切换时再跟着改。
       tg.setAttribute('aria-pressed', light ? 'false' : 'true');
     }
     if(document.documentElement.dataset.theme) color();  // 没手动选过就别插手
