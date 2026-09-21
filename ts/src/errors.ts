@@ -21,14 +21,16 @@ export function errorPage(status: number, title: string, detail: string,
   const body = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${status} · ${esc(title)}</title><style>
-:root{color-scheme:dark light}
+:root{--mut:#8f96a3;color-scheme:dark light}
 body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
  background:#16181d;color:#c9ced8;font:15px/1.8 -apple-system,BlinkMacSystemFont,"PingFang SC",
  "Hiragino Sans GB","Microsoft YaHei",system-ui,sans-serif;padding:24px}
-@media (prefers-color-scheme:light){body{background:#fbfbf9;color:#3d4148}}
+@media (prefers-color-scheme:light){:root{--mut:#6b7280}body{background:#fbfbf9;color:#3d4148}}
 .b{max-width:420px;text-align:center}
-h1{margin:0 0 6px;font-size:40px;font-weight:600;letter-spacing:.02em;opacity:.35}
-p{margin:0 0 6px;color:#8f96a3}
+/* 大字 AA 是 3.0：.35 的透明字合成后只有 2.4，提到 .55 */
+h1{margin:0 0 6px;font-size:40px;font-weight:600;letter-spacing:.02em;opacity:.55}
+/* 辅助文字 12px 也要 4.5：浅色模式原来用深色的 #8f96a3（3.0），透明度截断更糟 */
+p{margin:0 0 6px;color:var(--mut)}
 .l{margin-top:22px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .l a{padding:8px 14px;border-radius:7px;background:#232730;color:#c9ced8;text-decoration:none;font-size:13.5px}
 @media (prefers-color-scheme:light){.l a{background:#eceae5;color:#3d4148}}
@@ -36,7 +38,7 @@ p{margin:0 0 6px;color:#8f96a3}
 </style></head><body><div class="b">
 <h1>${status}</h1>
 <p>${esc(title)}</p>
-<p style="font-size:13px;opacity:.7">${esc(detail)}</p>
+<p style="font-size:13px;color:var(--mut)">${esc(detail)}</p>
 <div class="l">${links}</div>
 </div></body></html>`;
 
