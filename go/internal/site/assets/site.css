@@ -110,6 +110,12 @@ h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:
 .tab,.nav a,.tools button.tg,.tools .lang a,.nav select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .tab:not(.on):active,.nav a:active,.tools button.tg:active{background:var(--bg4)}
 
+/* 跳转反馈：换天/选日期先压暗正文再跳。线路慢时（边缘几秒不回包）给出
+   「在走了」的信号，PWA 没有地址栏进度条，否则看起来像点了没反应。 */
+.leaving main,.leaving .tabbar{opacity:.5}
+.leaving main{transition:opacity .15s}
+html:not(.leaving) main{transition:none}
+
 /* 键盘焦点：浅色主题里浏览器默认的焦点环是深色细线，压在浅灰按钮上几乎看不见。
    统一成链接色 2px 外框；选中的 tab 底色就是蓝的，换成前景色才分得开。 */
 a:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--link);outline-offset:2px}
@@ -255,9 +261,12 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   .lang i{display:inline}
   /* 44px 是 Apple 给的最小点按尺寸（原来是 38px）。日期导航与 Tab 是手机上仅有的
      高频操作，多占这 6px 换的是不再点空。 */
-  .nav a,.nav span.dis,.nav select{flex:1;text-align:center;padding:9px 6px;
+  .nav a,.nav span.dis{flex:1;text-align:center;padding:9px 6px;
     font-size:13px;min-height:44px;white-space:nowrap;display:flex;align-items:center;
     justify-content:center}
+  /* select 别跟着 display:flex：iOS Safari 上原生选择器有打不开的前科，
+     文字的垂直居中控件自己做。高度仍是 44px 的点按底线。 */
+  .nav select{flex:2.2 1 120px;min-width:88px;min-height:44px;padding:9px 6px;font-size:13px}
   .tools button.tg{padding:9px 12px;min-height:44px;display:flex;align-items:center}
   /* 下拉是主控件，多分一些；min-width 不能给 0：flex 会把它一路压到看不见 */
   .nav select{flex:2.2 1 120px;min-width:88px}
