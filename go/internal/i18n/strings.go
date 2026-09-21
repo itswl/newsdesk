@@ -34,10 +34,9 @@ var (
 
 // s 是文案表：key -> {简体, 英文}。新增文案只需补这两项。
 var s = map[string][2]string{
-	"site.name":       {"每日简报", "Daily Briefing"},
-	"site.archive":    {"历史简报", "Archive"},
-	"site.latest":     {"最新", "Latest"},
-	"site.none_today": {"当天没有任何报告。", "No reports for this day."},
+	"site.name":    {"每日简报", "Daily Briefing"},
+	"site.archive": {"历史简报", "Archive"},
+	"site.latest":  {"最新", "Latest"},
 	"site.feed_sub": {"AI 新闻 · GitHub Trending · 摸摸鱼热榜 · 豆瓣电影",
 		"AI News · GitHub Trending · Momoyu Hot List · Douban Films"},
 
@@ -71,14 +70,16 @@ var s = map[string][2]string{
 	"nav.theme_label": {"深色模式", "Dark mode"},
 	"nav.lang":        {"切换语言", "Switch language"},
 	"nav.tabs_label":  {"栏目", "Sections"},
+	"nav.skip":        {"跳到正文", "Skip to content"},
 
 	"tab.absent": {"当天没有这份报告——任务没跑，或者跑了但失败了",
 		"No such report for this day — the task did not run, or it failed."},
 	"tab.draft_tip": {"这是草稿版本：当天的正式版还没生成，正式版出来后会取代它",
 		"Draft: the final version for this day has not been generated yet."},
-	"tab.draft_badge": {"草稿", "draft"},
-	"tab.draft_mark":  {"·草稿", "·draft"},
-	"tab.draft_title": {"草稿版本，非最终稿", "Draft, not the final version"},
+	"tab.untranslated": {"这份报告的本语言版本还没生成", "This report has not been translated into this language yet."},
+	"tab.draft_badge":  {"草稿", "draft"},
+	"tab.draft_mark":   {"·草稿", "·draft"},
+	"tab.draft_title":  {"草稿版本，非最终稿", "Draft, not the final version"},
 
 	"arch.date":    {"日期", "Date"},
 	"arch.reports": {"报告", "Reports"},

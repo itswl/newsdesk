@@ -28,7 +28,8 @@ const recentDays = 14 // 下拉里直接列出的天数，其余走归档页
 // 内容更新时间标注。精确到分，带时区偏移——页面是静态的、会被边缘缓存，读者
 // 看到的内容可能比现在旧得多；不带偏移量的 10:41 也无法判断是哪个时区的。
 //
-// 栏目页跟在 reports/ 路径行下面，归档页没有路径行，放页脚。
+// 栏目页放在面板第一行（以前上面还有一行 reports/ 路径，那是内部信息，占着正文
+// 最显眼的位置，去掉了），归档页放页脚。
 func (b *Builder) genTimeText() string {
 	return b.T("gen.at", b.genAt.Format("2006-01-02 15:04 (UTC-07:00)"))
 }
@@ -190,24 +191,93 @@ func (b *Builder) nav(day string) string {
 		fmt.Fprintf(&opts, `<option value="@archive">%s</option>`, esc(b.T("nav.more", len(b.days))))
 	}
 
+	// 只放日期导航。语言切换与主题按钮在 tools()，挪去了标题那一行——
+	// 这一行在手机上已经满员，多一个语言块就换行，页头高度随当天标签宽度
+	// 在 136 与 160px 之间跳；标题行右侧本来是空的。
 	return fmt.Sprintf(`<div class="nav">%s<select id="daysel" aria-label="%s">%s</select>%s`+
-		`<a class="all" href="archive.html">%s</a>%s`+
-		`<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div>`,
-		prev, esc(b.T("nav.date_label")), opts.String(), next, esc(b.T("nav.all", len(b.days))),
-		b.langSwitch(day+".html"), esc(b.T("nav.theme")), esc(b.T("nav.theme_label")))
+		`<a class="all" href="archive.html">%s</a></div>`,
+		prev, esc(b.T("nav.date_label")), opts.String(), next, esc(b.T("nav.all", len(b.days))))
+}
+
+// tools 语言切换与主题按钮，放在标题那一行的右侧（见 nav 的说明）。
+func (b *Builder) tools(page string) string {
+	return fmt.Sprintf(`<div class="tools">%s<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div>`,
+		b.langSwitch(page), esc(b.T("nav.theme")), esc(b.T("nav.theme_label")))
+}
+
+// skipLink 键盘与读屏用户跳过页头：进正文前有九个可聚焦控件，每翻一天都要
+// 再走一遍。平时藏在视口外，获得焦点才滑进来。
+func (b *Builder) skipLink() string {
+	return fmt.Sprintf(`<a class="skip" href="#main">%s</a>`, esc(b.T("nav.skip")))
+}
+
+// headMeta 搜索摘要与分享卡片。没有 description 的页面，链接贴进微信 / 飞书 /
+// Slack 只有一个裸地址。og:image 复用根目录那份 512 图标：它已经在 Worker 白名单里，
+// 不必为分享再开一条路径。没配 SITE_URL 就只出 description——og 标签要求绝对地址。
+func (b *Builder) headMeta(title, page string) string {
+	desc := b.T("site.feed_sub")
+	s := fmt.Sprintf(`<meta name="description" content="%s">`, esc(desc))
+	if b.o.SiteURL == "" {
+		return s
+	}
+	return s + fmt.Sprintf(`<meta property="og:type" content="website"><meta property="og:site_name" content="%s">`+
+		`<meta property="og:title" content="%s"><meta property="og:description" content="%s">`+
+		`<meta property="og:url" content="%s/%s"><meta property="og:image" content="%s/icon-512.png">`+
+		`<meta name="twitter:card" content="summary">`,
+		esc(b.T("site.name")), esc(title), esc(desc), b.baseURL(), page, b.langURL(b.rootLang))
 }
 
 func (b *Builder) writeDay(day string) error {
+	newest := day == b.days[len(b.days)-1]
+	// 状态只对「今天」有意义：过去的日子只剩「有 / 没有这份报告」。按日期比对而不是
+	// 按「是否最新一天」——凌晨还没出任何报告时最新一天是昨天，别把今天的
+	// 「都还没跑」贴到昨天的页面上。
+	var state map[string]dayState
+	if day == time.Now().Format("2006-01-02") {
+		state = b.todayState()
+	}
+	// 默认选中第一份存在的报告；一份都没有时选第一档，让它的说明面板露出来
+	firstKey := task.All[0].Key
+	for _, t := range task.All {
+		if _, ok := b.reportFile(day, t); ok {
+			firstKey = t.Key
+			break
+		}
+	}
+
 	var tabs, panes strings.Builder
-	first := true
 	for _, t := range task.All {
 		label := b.T("panel." + t.Key)
 		path, ok := b.reportFile(day, t)
+		on, selected := "", "false"
+		if t.Key == firstKey {
+			on, selected = " on", "true"
+		}
+		cls, mark, tip := b.tabStatus(t, path, ok, state)
+		if mark != "" {
+			mark = fmt.Sprintf(`<i class="m">%s</i>`, mark)
+		}
+		title := ""
+		if tip != "" {
+			title = fmt.Sprintf(` title="%s"`, esc(tip))
+		}
+		badge := ""
+		if ok && strings.Contains(filepath.Base(path), "_draft") {
+			badge = fmt.Sprintf(` <em title="%s">%s</em>`,
+				esc(b.T("tab.draft_title")), esc(b.T("tab.draft_badge")))
+		}
+		// role / aria-selected 让读屏报出「哪一档是选中的」；aria-controls 与面板的
+		// aria-labelledby 互指。选中态先按服务端写死，之后由 site.js 在点击与深链
+		// （#douban）时改写。方向键有意不归 tab——见 AGENTS.md「栏目 tab」一节。
+		// 全称与短名都输出，CSS 按屏宽切换，同一份 HTML 两种宽度都对。
+		fmt.Fprintf(&tabs, `<button class="tab%s%s" data-t="%s" id="t-%s" role="tab" aria-selected="%s" aria-controls="p-%s"%s>%s<b class="l">%s</b><i class="s">%s</i>%s</button>`,
+			on, cls, t.Key, t.Key, selected, t.Key, title, mark, esc(label), esc(b.T("short."+t.Key)), badge)
+
 		if !ok {
-			// 缺报告的档也占一个 tab 位（读者要知道「今天没有这份」），但标成不可用；
-			// 它没有对应面板，所以不给 aria-controls。
-			fmt.Fprintf(&tabs, `<button class="tab absent" data-t="%s" role="tab" aria-selected="false" aria-disabled="true" title="%s">%s</button>`,
-				t.Key, esc(b.T("tab.absent")), esc(label))
+			// 缺报告的档也有面板，说清为什么没有、几点会有。以前这句话只在 title
+			// 悬浮提示里，触屏上根本看不到。
+			fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s" role="tabpanel" aria-labelledby="t-%s"><p class="none">%s</p></section>`,
+				on, t.Key, t.Key, esc(tip))
 			continue
 		}
 		body, err := b.renderBody(path)
@@ -217,23 +287,6 @@ func (b *Builder) writeDay(day string) error {
 		// 宽表在窄屏只能横向滚，包一层容器才能加滚动提示
 		body = strings.ReplaceAll(body, "<table>", `<div class="tw"><div><table>`)
 		body = strings.ReplaceAll(body, "</table>", "</table></div></div>")
-
-		draft := strings.Contains(filepath.Base(path), "_draft")
-		tip, badge := "", ""
-		if draft {
-			tip = fmt.Sprintf(` title="%s"`, esc(b.T("tab.draft_tip")))
-			badge = fmt.Sprintf(` <em title="%s">%s</em>`,
-				esc(b.T("tab.draft_title")), esc(b.T("tab.draft_badge")))
-		}
-		on, selected := "", "false"
-		if first {
-			on, selected = " on", "true"
-		}
-		// role / aria-selected 让读屏报出「哪一档是选中的」；aria-controls 与面板的
-		// aria-labelledby 互指。选中态先按服务端的第一档写死，之后由 site.js 在点击
-		// 与深链（#douban）时改写。方向键有意不归 tab——见 AGENTS.md「栏目 tab」一节。
-		fmt.Fprintf(&tabs, `<button class="tab%s" data-t="%s" id="t-%s" role="tab" aria-selected="%s" aria-controls="p-%s"%s>%s%s</button>`,
-			on, t.Key, t.Key, selected, t.Key, tip, esc(label), badge)
 		st, err := os.Stat(path)
 		at := b.genAt
 		modTime := at.Unix()
@@ -241,45 +294,37 @@ func (b *Builder) writeDay(day string) error {
 			at = st.ModTime()
 			modTime = st.ModTime().Unix()
 		}
-		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s" role="tabpanel" aria-labelledby="t-%s"><div class="src">%s</div>%s%s</section>`,
-			on, t.Key, t.Key, esc(relTo(b.o.Root, path)), b.genSrcNote(at), body)
-		first = false
+		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s" role="tabpanel" aria-labelledby="t-%s">%s%s</section>`,
+			on, t.Key, t.Key, b.genSrcNote(at), body)
 
 		b.entries = append(b.entries, entry{Day: day, Key: t.Key, Label: label,
 			ModTime: modTime, Body: body})
 	}
 
-	main := panes.String()
-	if main == "" {
-		main = "<p>" + esc(b.T("site.none_today")) + "</p>"
-	}
-	newest := day == b.days[len(b.days)-1]
-	status := ""
 	latest := ""
 	if newest {
-		status = b.statusBar()
 		latest = fmt.Sprintf(`<b class="new">%s</b>`, esc(b.T("site.latest")))
 	}
 	note := ""
 	if b.windowed {
 		note = fmt.Sprintf(`<p class="keep">%s</p>`, esc(b.keepNote()))
 	}
+	title := b.T("site.name") + " " + day
+	page := day + ".html"
 
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
-		viewport+`<title>%s %s</title>%s%s%s<style>%s</style></head><body>`+
-		`<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>`+
-		`<nav class="tabbar"><div class="tabs" role="tablist" aria-label="%s">%s</div></nav><main>%s`+
+		viewport+`<title>%s</title>%s%s%s%s<style>%s</style></head><body>`+
+		`%s<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s%s</div></header>`+
+		`<nav class="tabbar"><div class="tabs" role="tablist" aria-label="%s">%s</div></nav>`+
+		`<main id="main" tabindex="-1">%s`+
 		`<footer class="dis">%s%s</footer></main><script>%s</script></body></html>`,
-		i18n.HTMLLang(b.o.Lang), esc(b.T("site.name")), day,
-		b.headIcons(), b.headLinks(day+".html"), headJS, css,
-		esc(b.T("site.name")), day, latest, b.nav(day), status,
-		esc(b.T("nav.tabs_label")), tabs.String(), main, note, b.disclaimer(), js)
+		i18n.HTMLLang(b.o.Lang), esc(title), b.headMeta(title, page), b.headIcons(), b.headLinks(page), headJS, css,
+		b.skipLink(), esc(b.T("site.name")), day, latest, b.nav(day), b.tools(page),
+		esc(b.T("nav.tabs_label")), tabs.String(), panes.String(), note, b.disclaimer(), js)
 
-	return os.WriteFile(filepath.Join(b.o.Out, day+".html"), []byte(doc), 0o644)
+	return os.WriteFile(filepath.Join(b.o.Out, page), []byte(doc), 0o644)
 }
 
-// writeIndex index.html 是最新一天的副本。对象存储没有「默认文档」概念，
-// 访问 / 不会自动返回 index.html，Worker 那层会补。
 func (b *Builder) writeIndex() error {
 	newest := b.days[len(b.days)-1]
 	src, err := os.ReadFile(filepath.Join(b.o.Out, newest+".html"))
@@ -316,7 +361,9 @@ func (b *Builder) writeArchive() error {
 					mark = b.T("tab.draft_mark")
 				}
 			}
-			fmt.Fprintf(&chips, `<span class="%s">%s%s</span>`, cls, esc(b.T("short."+t.Key)), esc(mark))
+			// 基类 chip 必须带上：样式表写的是 .chip.has / .chip.draft，光有修饰类什么都不匹配，
+			// 四个标签就成了挤在一起的一串灰字（实测漏过）。
+			fmt.Fprintf(&chips, `<span class="chip %s">%s%s</span>`, cls, esc(b.T("short."+t.Key)), esc(mark))
 		}
 		latest := ""
 		if d == b.days[len(b.days)-1] {
@@ -334,17 +381,17 @@ func (b *Builder) writeArchive() error {
 	if b.windowed {
 		note = fmt.Sprintf(`<p class="keep">%s</p>`, esc(b.keepNote()))
 	}
+	title := b.T("site.archive")
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
-		viewport+`<title>%s</title>%s%s%s<style>%s</style></head><body>`+
-		`<header><div class="bar"><h1 class="site">%s · %s %s</h1>`+
-		`<div class="nav"><a href="index.html">%s</a>%s`+
-		`<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div></div></header>`+
-		`<main>%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>`+
-		`<footer class="dis">%s<p class="gen">%s</p></main><script>%s</script></body></html>`,
-		i18n.HTMLLang(b.o.Lang), esc(b.T("site.archive")),
+		viewport+`<title>%s</title>%s%s%s%s<style>%s</style></head><body>`+
+		`%s<header><div class="bar"><h1 class="site">%s · %s %s</h1>`+
+		`<div class="nav"><a href="index.html">%s</a></div>%s</div></header>`+
+		`<main id="main" tabindex="-1">%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>`+
+		`<footer class="dis">%s<p class="gen">%s</p></footer></main><script>%s</script></body></html>`,
+		i18n.HTMLLang(b.o.Lang), esc(title), b.headMeta(title, "archive.html"),
 		b.headIcons(), b.headLinks("archive.html"), headJS, css,
-		esc(b.T("site.archive")), esc(scope), esc(b.T("arch.days", len(b.days))),
-		esc(b.T("nav.back", b.days[len(b.days)-1])), b.langSwitch("archive.html"), esc(b.T("nav.theme")), esc(b.T("nav.theme_label")),
+		b.skipLink(), esc(title), esc(scope), esc(b.T("arch.days", len(b.days))),
+		esc(b.T("nav.back", b.days[len(b.days)-1])), b.tools("archive.html"),
 		note, esc(b.T("arch.date")), esc(b.T("arch.reports")), rows.String(),
 		b.disclaimer(), b.genNote(), js)
 	return os.WriteFile(filepath.Join(b.o.Out, "archive.html"), []byte(doc), 0o644)

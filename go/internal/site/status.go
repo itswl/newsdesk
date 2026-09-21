@@ -75,46 +75,49 @@ func (b *Builder) todayState() map[string]dayState {
 	return out
 }
 
-// statusBar 无人值守的东西必须把失败摆在看得见的地方——只写进日志等于没有告警。
-// 顺序按触发时刻排：状态条读起来是一条时间线，左边已跑过、右边还没到。
-// 用板块名顺序的话，跑完的会被没跑的隔开（✓ · · ✓），看着像出了错。
-func (b *Builder) statusBar() string {
-	state := b.todayState()
-	mark := map[string][2]string{
-		"ok": {"ok", "✓"}, "draft": {"warn", "✎"}, "failed": {"bad", "✘"},
-		"retrying": {"warn", "…"}, "skipped": {"warn", "⊘"}, "pending": {"pend", "·"},
-	}
-	var sb strings.Builder
-	bad := false
-	for _, t := range task.All {
-		s := state[t.Key]
-		m := mark[s.Status]
-		var tip string
-		switch s.Status {
-		case "ok", "draft":
-			tip = b.T("st."+s.Status, s.At)
-		case "failed":
-			tip = b.T("st.failed", fmt.Sprint(s.Attempts))
-			bad = true
-		case "retrying":
-			tip = b.T("st.retry", fmt.Sprint(s.Attempts))
-		case "skipped":
-			tip = b.T("st.skipped")
-			bad = true
-		default:
-			tip = b.T("st.pending")
-			if s.Planned != "" {
-				tip += b.T("st.planned", s.Planned)
+// tabStatus 一个档在 tab 上的样子：附加 class、状态记号、悬浮与面板里的说明。
+//
+// 状态曾单独占一行「状态条」。它和 tab 是同一份四任务清单，写两遍在手机上白占
+// 一行；并到 tab 上之后失败仍然醒目——tab 条是 sticky 的，比会滚走的页头更难错过。
+//
+// 记号沿用原来那套字形：✎ 草稿、✘ 失败、… 重试中、⊘ 跳过、· 还没到点。
+// 正常跑完的不给记号，四个 tab 全带勾是噪声，缺席才需要解释。
+// 缺报告的档不划删除线：一天里大部分时间它们只是还没到点，不是失败。
+//
+// state 只在页面日期就是今天时才有；过去的日子只剩「有 / 没有这份报告」。
+func (b *Builder) tabStatus(t task.Task, path string, present bool, state map[string]dayState) (cls, mark, tip string) {
+	if present {
+		if strings.Contains(filepath.Base(path), "_draft") {
+			if s, ok := state[t.Key]; ok && s.Status == "draft" {
+				return "", "✎", b.T("st.draft", s.At)
 			}
+			return "", "✎", b.T("tab.draft_tip")
 		}
-		fmt.Fprintf(&sb, `<span class="st %s" title="%s"><i class="m">%s</i>%s</span>`,
-			m[0], esc(tip), m[1], esc(b.T("short."+t.Key)))
+		if s, ok := state[t.Key]; ok && s.Status == "ok" && s.At != "" {
+			return "", "", b.T("st.ok", s.At)
+		}
+		return "", "", ""
 	}
-	alert := ""
-	if bad {
-		alert = " alert"
+	s, ok := state[t.Key]
+	if !ok {
+		return " absent", "", b.T("tab.absent")
 	}
-	return fmt.Sprintf(`<div class="status%s">%s</div>`, alert, sb.String())
+	switch s.Status {
+	case "ok", "draft":
+		// 简体原文有、这个语言没有：是译文还没出，不是任务没跑
+		return " absent", "", b.T("tab.untranslated")
+	case "failed":
+		return " absent bad", "✘", b.T("st.failed", fmt.Sprint(s.Attempts))
+	case "retrying":
+		return " absent warn", "…", b.T("st.retry", fmt.Sprint(s.Attempts))
+	case "skipped":
+		return " absent warn", "⊘", b.T("st.skipped")
+	}
+	tip = b.T("st.pending")
+	if s.Planned != "" {
+		tip += b.T("st.planned", s.Planned)
+	}
+	return " absent pend", "·", tip
 }
 
 type statusDoc struct {

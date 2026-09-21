@@ -1,6 +1,7 @@
 // 栏目 tab：选中态同时写在 class 和 aria-selected 上，读屏靠后者知道选了哪一档。
+// 缺报告的档也能点，面板里说明为什么没有、几点会有。
 // 方向键有意不接管（留给换天，见下面 onkeydown），tab 之间用 Tab 键移动。
-document.querySelectorAll('.tab:not(.absent)').forEach(function(b){
+document.querySelectorAll('.tab').forEach(function(b){
   b.onclick=function(){
     document.querySelectorAll('.tab').forEach(function(x){
       x.classList.remove('on'); x.setAttribute('aria-selected','false');
@@ -14,7 +15,7 @@ document.querySelectorAll('.tab:not(.absent)').forEach(function(b){
 });
 (function(){
   var h=location.hash.slice(1);
-  if(h){var t=document.querySelector('.tab[data-t="'+h+'"]:not(.absent)'); if(t)t.click();}
+  if(h){var t=document.querySelector('.tab[data-t="'+h+'"]'); if(t)t.click();}
 })();
 var sel=document.getElementById('daysel');
 if(sel) sel.onchange=function(){

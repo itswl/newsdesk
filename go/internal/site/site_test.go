@@ -440,10 +440,15 @@ func TestPageCarriesGenerationTime(t *testing.T) {
 
 	for _, page := range []string{"index.html", "2026-09-17.html"} {
 		body := read(t, filepath.Join(out, page))
-		// 位置：紧跟在 reports/ 路径行下面，读者进正文前先看到
-		i := strings.Index(body, `<div class="src">reports/`)
-		if i < 0 || !strings.Contains(body[i:i+600], `<div class="src gen">`) {
-			t.Errorf("%s 的生成时刻没有紧跟 reports/ 路径行", page)
+		// 位置：面板第一行，读者进正文前先看到。以前上面还有一行 reports/ 路径，
+		// 那是内部信息，占着正文最显眼的位置，已去掉。
+		const open = `aria-labelledby="t-ai">`
+		i := strings.Index(body, open)
+		if i < 0 || !strings.HasPrefix(body[i+len(open):], `<div class="src gen">`) {
+			t.Errorf("%s 的生成时刻没有在面板第一行", page)
+		}
+		if strings.Contains(body, `<div class="src">reports/`) {
+			t.Errorf("%s 仍在输出 reports/ 路径行", page)
 		}
 		m := reTime.FindStringSubmatch(body)
 		if m == nil {
@@ -455,7 +460,7 @@ func TestPageCarriesGenerationTime(t *testing.T) {
 			t.Errorf("%s 的时间不是合法格式：%s", page, m[1])
 		}
 	}
-	// 归档页没有 reports/ 路径行，标注留在页脚
+	// 归档页没有面板，标注留在页脚
 	if a := read(t, filepath.Join(out, "archive.html")); !strings.Contains(a, `<p class="gen">`) {
 		t.Error("归档页页脚应保留生成时刻")
 	}
@@ -712,12 +717,16 @@ func TestTabsCarryARIASemantics(t *testing.T) {
 	if n := strings.Count(body, `aria-selected="true"`); n != 1 {
 		t.Errorf("选中的 tab 应恰好一个，实际 %d", n)
 	}
-	// 第一档（ai）默认选中；缺席的档标不可用、不选中、不指向面板
+	// 第一档（ai）默认选中
 	if !strings.Contains(body, `<button class="tab on" data-t="ai" id="t-ai" role="tab" aria-selected="true" aria-controls="p-ai">`) {
 		t.Error("第一档没有按选中态渲染")
 	}
-	if !strings.Contains(body, `class="tab absent" data-t="trending" role="tab" aria-selected="false" aria-disabled="true"`) {
-		t.Error("缺席的档没有标成 aria-disabled")
+	// 缺席的档也是能点开的 tab：有自己的面板，说明为什么没有
+	if !strings.Contains(body, `class="tab absent" data-t="trending" id="t-trending" role="tab" aria-selected="false" aria-controls="p-trending" title="`) {
+		t.Error("缺席的档没有按可点开的 tab 渲染")
+	}
+	if strings.Contains(body, `aria-disabled`) {
+		t.Error("缺席的档不该再是禁用态")
 	}
 	// 面板与 tab 互指，且引用的 id 真的存在
 	for _, m := range regexp.MustCompile(`aria-(?:controls|labelledby)="([^"]+)"`).FindAllStringSubmatch(body, -1) {
@@ -725,8 +734,11 @@ func TestTabsCarryARIASemantics(t *testing.T) {
 			t.Errorf("%s 指向不存在的 id", m[0])
 		}
 	}
-	if n := strings.Count(body, `role="tabpanel"`); n != 2 {
-		t.Errorf("面板应有 2 个（ai、douban），实际 %d", n)
+	if n := strings.Count(body, `role="tabpanel"`); n != len(task.All) {
+		t.Errorf("每档一个面板（缺席的档放说明），应有 %d 个，实际 %d", len(task.All), n)
+	}
+	if n := strings.Count(body, `<p class="none">`); n != len(task.All)-2 {
+		t.Errorf("缺席的两档应各有一段说明，实际 %d 段", n)
 	}
 	if !strings.Contains(body, `id="p-douban" role="tabpanel" aria-labelledby="t-douban"`) {
 		t.Error("面板没有 aria-labelledby 指回 tab")
@@ -734,5 +746,128 @@ func TestTabsCarryARIASemantics(t *testing.T) {
 	// 选中态由脚本在点击与深链时改写
 	if !strings.Contains(body, `setAttribute('aria-selected'`) {
 		t.Error("site.js 没有维护 aria-selected")
+	}
+}
+
+// tab 同时输出全称与短名，CSS 按屏宽切换；短名沿用 short.* 那套，与旧状态条一致。
+func TestTabsCarryShortLabels(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	body := read(t, filepath.Join(build(t, Options{Root: root}), "2026-09-17.html"))
+	if !strings.Contains(body, `<b class="l">AI 简报</b><i class="s">AI</i>`) {
+		t.Error("tab 缺全称 + 短名")
+	}
+}
+
+// 今天这一页的 tab 带状态：失败红、还没到点灰点并写明计划时刻；缺报告的档能点开，
+// 面板里是同一句说明。以前这些话只在悬浮提示里，触屏上看不到。
+func TestTabsCarryTodayStatus(t *testing.T) {
+	today := time.Now().Format("2006-01-02")
+	root := t.TempDir()
+	dir := filepath.Join(root, "reports", today)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(dir, "ai-news.md"), "# AI\n\n正文。\n")
+	if err := os.MkdirAll(filepath.Join(root, "state"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(root, "state", "schedule.json"),
+		`{"douban":{"date":"`+today+`","status":"failed","attempts":3}}`)
+	body := read(t, filepath.Join(build(t, Options{Root: root}), today+".html"))
+
+	for _, want := range []string{
+		`class="tab absent bad" data-t="douban"`, `<i class="m">✘</i>`,
+		`<p class="none">今天失败了，重试 3 次后放弃`,
+		`class="tab absent pend" data-t="trending"`, `<i class="m">·</i>`,
+		`<p class="none">今天还没跑，计划 16:40</p>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("缺 %s", want)
+		}
+	}
+	// 正常跑完的不给记号，四个 tab 全带勾是噪声
+	i := strings.Index(body, `data-t="ai"`)
+	if seg := body[i : i+strings.Index(body[i:], "</button>")]; strings.Contains(seg, `class="m"`) {
+		t.Error("跑完的档不该带状态记号")
+	}
+	// 独立的状态条不再输出
+	if strings.Contains(body, `class="status`) || strings.Contains(body, `class="st `) {
+		t.Error("状态条应已并进 tab")
+	}
+}
+
+// 页头两行：标题 + 语言/主题在第一行，日期导航独占第二行；键盘用户有「跳到正文」，落点是 main。
+func TestHeaderLayoutAndSkipLink(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	out := build(t, Options{Root: root})
+	for _, p := range []string{"index.html", "2026-09-17.html", "archive.html"} {
+		body := read(t, filepath.Join(out, p))
+		if b := strings.Index(body, "<body>"); b < 0 || !strings.HasPrefix(body[b+6:], `<a class="skip" href="#main">`) {
+			t.Errorf("%s 的 body 第一个元素应是跳到正文", p)
+		}
+		for _, want := range []string{`<main id="main" tabindex="-1">`, `<div class="tools">`, `<button class="tg" id="theme"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s 缺 %s", p, want)
+			}
+		}
+		nav, tools := strings.Index(body, `<div class="nav">`), strings.Index(body, `<div class="tools">`)
+		if nav < 0 || tools < nav {
+			t.Errorf("%s 的 tools 应紧跟在 nav 之后", p)
+			continue
+		}
+		if strings.Contains(body[nav:tools], `class="tg"`) {
+			t.Errorf("%s 的主题按钮仍在日期导航里", p)
+		}
+	}
+}
+
+// 归档页每行的四个栏目标签要带 chip 基类：样式表写的是 .chip.has，光有修饰类什么都
+// 不匹配，四个标签就成了挤在一起的一串灰字（实测漏过）。
+func TestArchiveChipsCarryBaseClass(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	a := read(t, filepath.Join(build(t, Options{Root: root}), "archive.html"))
+	for _, want := range []string{`<span class="chip has">AI</span>`, `<span class="chip no">Trending</span>`} {
+		if !strings.Contains(a, want) {
+			t.Errorf("归档页缺 %s", want)
+		}
+	}
+	if strings.Contains(a, `<span class="has">`) {
+		t.Error("归档页仍在输出没有 chip 基类的标签")
+	}
+	if !strings.Contains(a, `</footer></main>`) {
+		t.Error("归档页的 footer 没有闭合")
+	}
+}
+
+// 分享卡片：description 总有；og 标签要绝对地址，配了 SITE_URL 才出，图用根目录的 512 图标。
+func TestHeadCarriesShareMetadata(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	with := read(t, filepath.Join(build(t, Options{Root: root, SiteURL: "https://news.example.com"}), "2026-09-17.html"))
+	for _, want := range []string{
+		`<meta name="description" content="`,
+		`<meta property="og:title" content="每日简报 2026-09-17">`,
+		`<meta property="og:url" content="https://news.example.com/2026-09-17.html">`,
+		`<meta property="og:image" content="https://news.example.com/icon-512.png">`,
+	} {
+		if !strings.Contains(with, want) {
+			t.Errorf("缺 %s", want)
+		}
+	}
+	without := read(t, filepath.Join(build(t, Options{Root: root}), "2026-09-17.html"))
+	if !strings.Contains(without, `<meta name="description"`) || strings.Contains(without, `og:image`) {
+		t.Error("没配 SITE_URL 时应只有 description，没有 og 标签")
+	}
+	// 英文站的 og:url 跟着语言子目录走，og:image 仍指根目录那份
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
+	// 单语构建时根语言就是英文、不带 /en；要有别的语言在前面它才是子目录
+	en := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.En, AllLangs: []i18n.Lang{i18n.ZhCN, i18n.En},
+		SiteURL: "https://news.example.com"}), "2026-09-17.html"))
+	for _, want := range []string{
+		`<meta property="og:url" content="https://news.example.com/en/2026-09-17.html">`,
+		`<meta property="og:image" content="https://news.example.com/icon-512.png">`,
+	} {
+		if !strings.Contains(en, want) {
+			t.Errorf("英文站缺 %s", want)
+		}
 	}
 }

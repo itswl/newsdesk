@@ -1,11 +1,14 @@
 /* 配色抽成变量，两套主题只差这一块。避免维护两份完整样式表然后慢慢漂移。
-   对比度有意压低：深色 #c9ced8/#16181d 约 9.5:1、浅色约 10:1，都远高于
-   WCAG AA 的 4.5:1，但比纯白纯黑柔和——这些报告动辄几千字，要能久看。 */
+   对比度有意压低：深色 #c9ced8/#16181d 约 11:1、浅色约 10:1，都远高于
+   WCAG AA 的 4.5:1，但比纯白纯黑柔和——这些报告动辄几千字，要能久看。
+   弱化色 fg3 用在 12px 小字上（页脚、更新时刻、缺席的 tab），小字的 AA 线也是
+   4.5:1：深色 #7f8794 是 4.9、浅色 #6f757f 是 4.5，别再往灰里调。
+   accent 上压白字，14.5px 也是小字：#2f6fe4 给 4.65，原来的 #3b7bf0 只有 4.0。 */
 :root{
   --bg:#16181d; --bg2:#1b1e25; --bg3:#232730; --bg4:#20242c; --bg5:#1a1d24;
-  --fg:#c9ced8; --fg2:#8f96a3; --fg3:#666d79; --fgh:#eef1f6; --fgh2:#aeb6c2;
+  --fg:#c9ced8; --fg2:#8f96a3; --fg3:#7f8794; --fgh:#eef1f6; --fgh2:#aeb6c2;
   --bd:#272b34; --bd2:#2f343e; --bd3:#262a33;
-  --link:#6ba4ff; --accent:#3b7bf0; --code:#e0a373;
+  --link:#6ba4ff; --accent:#2f6fe4; --code:#e0a373;
   --stripe:#1a1d23; --quote-bd:#3c4250;
   --ok-fg:#74c894; --ok-bd:#2b4b36;
   --bad-fg:#f09b9b; --bad-bd:#6e3131; --bad-bg:#2a1a1a;
@@ -17,9 +20,9 @@
 }
 html[data-theme=light]{
   --bg:#fcfcfb; --bg2:#f5f5f3; --bg3:#fff; --bg4:#f1f1ee; --bg5:#f7f7f5;
-  --fg:#3a3f47; --fg2:#6b7280; --fg3:#949aa3; --fgh:#1d2126; --fgh2:#454b54;
+  --fg:#3a3f47; --fg2:#6b7280; --fg3:#6f757f; --fgh:#1d2126; --fgh2:#454b54;
   --bd:#e8e7e3; --bd2:#dcdbd6; --bd3:#e4e3df;
-  --link:#2563c7; --accent:#3b7bf0; --code:#9a5416;
+  --link:#2563c7; --accent:#2f6fe4; --code:#9a5416;
   --stripe:#faf9f7; --quote-bd:#d5d4cf;
   --ok-fg:#1f7a45; --ok-bd:#bcdfc8;
   --bad-fg:#c02626; --bad-bd:#f0c2c2; --bad-bg:#fdefef;
@@ -32,7 +35,7 @@ html[data-theme=light]{
 @media (prefers-color-scheme:light){
   html:not([data-theme]){
     --bg:#fcfcfb; --bg2:#f5f5f3; --bg3:#fff; --bg4:#f1f1ee; --bg5:#f7f7f5;
-    --fg:#3a3f47; --fg2:#6b7280; --fg3:#949aa3; --fgh:#1d2126; --fgh2:#454b54;
+    --fg:#3a3f47; --fg2:#6b7280; --fg3:#6f757f; --fgh:#1d2126; --fgh2:#454b54;
     --bd:#e8e7e3; --bd2:#dcdbd6; --bd3:#e4e3df;
     --link:#2563c7; --code:#9a5416;
     --stripe:#faf9f7; --quote-bd:#d5d4cf;
@@ -55,8 +58,9 @@ body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
        "Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
   letter-spacing:.01em;-webkit-font-smoothing:antialiased}
 
-/* 表头随内容滚走，只留 Tab 条吸顶——Tab 是唯一高频操作，日期导航和状态条
-   看一眼就够，常驻会在手机上白占四分之一屏。 */
+/* 表头随内容滚走，只留 Tab 条吸顶——Tab 是唯一高频操作，日期导航看一眼就够，
+   常驻会在手机上白占四分之一屏。页头只有两行：标题 + 语言/主题，日期导航。
+   任务状态并在 tab 上（见 .tab .m），不再单独占一行。 */
 /* 安全区：刘海屏横屏时左右各被系统占掉 44px，底部小横条 34px，内容压进去就点不到。
    每条都先写一条不带 env() 的兜底——不认 env() 的浏览器会把后一条整条丢掉，
    只剩前一条，正好是加安全区之前的样子。env() 为 0 时（没有刘海、竖屏）
@@ -69,32 +73,52 @@ header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px
   padding-left:max(24px,env(safe-area-inset-left,0px));
   padding-right:max(24px,env(safe-area-inset-right,0px))}
 .bar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;
-  max-width:860px;margin:0 auto 10px}
+  max-width:860px;margin:0 auto}
 h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:.02em}
 .nav{display:flex;align-items:center;gap:6px;margin-left:auto}
-.nav a,.nav span.dis,.nav button.tg{display:inline-block;padding:6px 12px;border-radius:7px;
+.tools{display:flex;align-items:center;gap:6px}
+.nav a,.nav span.dis,.tools button.tg{display:inline-block;padding:6px 12px;border-radius:7px;
   font-size:13px;border:1px solid transparent;background:var(--bg3);color:var(--fg2);
   text-decoration:none;font-family:inherit;cursor:pointer;transition:background .15s}
-.nav a:hover,.nav button.tg:hover{background:var(--bg4);color:var(--fgh2);text-decoration:none}
+.nav a:hover,.tools button.tg:hover{background:var(--bg4);color:var(--fgh2);text-decoration:none}
 .nav span.dis{opacity:.4}
 .nav a em{font-style:normal}
 .nav select{background:var(--bg3);color:var(--fg2);border:1px solid transparent;border-radius:7px;
   padding:6px 10px;font-size:13px;font-family:inherit;min-width:0;max-width:100%}
 .nav a.all{color:var(--link)}
 .tabs{display:flex;gap:6px;flex-wrap:wrap;max-width:860px;margin:0 auto}
-.tab{background:transparent;color:var(--fg2);border:1px solid transparent;border-radius:8px;
-  padding:7px 14px;font-size:14.5px;cursor:pointer;font-family:inherit;transition:background .15s}
+.tab{display:inline-flex;align-items:center;gap:6px;background:transparent;color:var(--fg2);
+  border:1px solid transparent;border-radius:8px;padding:7px 14px;font-size:14.5px;
+  cursor:pointer;font-family:inherit;transition:background .15s}
 .tab:hover{background:var(--bg3);color:var(--fgh2)}
-.tab.on{background:var(--accent);color:#fff}
 .tab em{font-style:normal;font-size:11px;opacity:.85;background:rgba(255,255,255,.2);
-  padding:1px 6px;border-radius:5px;margin-left:6px}
-.tab.absent{opacity:.3;cursor:not-allowed;text-decoration:line-through}
+  padding:1px 6px;border-radius:5px}
+/* 全称 .l 与短名 .s 都在 HTML 里，按屏宽只显示一个（与 .lang 同一手法） */
+.tab .s{display:none;font-style:normal}
+/* 任务状态并在 tab 上：状态条和 tab 本是同一份四任务清单，写两遍在手机上白占一行。
+   缺报告的档只是灰字，不划删除线——一天里大部分时间它们只是还没到点，不是失败，
+   点开能看到计划时刻。失败才用红，而且这条在 sticky 的 tab 条上，比会滚走的页头更醒目。 */
+.tab .m{font-style:normal;font-size:12px;line-height:1}
+.tab.absent{color:var(--fg3)}
+.tab.bad{color:var(--bad-fg)}
+.tab.warn{color:var(--warn-fg)}
+.tab.on{background:var(--accent);color:#fff}
 
 /* 触屏三点：:hover 在手机上要么不触发、要么触发后粘住不消失，所以补一个显式的
    按下态；iOS 默认那层半透明高亮压在按钮上会把文字糊掉，去掉；touch-action
    消掉双击缩放的等待，快速连点两个 Tab 不会再吞掉第一次。 */
-.tab,.nav a,.nav button.tg,.nav select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
-.tab:not(.on):active,.nav a:active,.nav button.tg:active{background:var(--bg4)}
+.tab,.nav a,.tools button.tg,.tools .lang a,.nav select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.tab:not(.on):active,.nav a:active,.tools button.tg:active{background:var(--bg4)}
+
+/* 键盘焦点：浅色主题里浏览器默认的焦点环是深色细线，压在浅灰按钮上几乎看不见。
+   统一成链接色 2px 外框；选中的 tab 底色就是蓝的，换成前景色才分得开。 */
+a:focus-visible,button:focus-visible,select:focus-visible{outline:2px solid var(--link);outline-offset:2px}
+.tab.on:focus-visible{outline-color:var(--fgh)}
+/* 跳到正文：进正文前有九个可聚焦控件。平时藏在视口外，获得焦点才滑进来 */
+.skip{position:absolute;left:12px;top:-48px;z-index:20;padding:8px 12px;border-radius:8px;
+  background:var(--accent);color:#fff;font-size:14px;text-decoration:none}
+.skip:focus{top:12px}
+.skip:focus-visible{outline-color:var(--fgh)}
 
 /* 正文宽度 760px——中文 16.5px 下约 42 字一行。原来 1000px 是 66 字，
    眼睛每行都要横扫一遍，长文读着累。表格允许在此基础上横向滚。 */
@@ -103,9 +127,13 @@ main{max-width:760px;margin:0 auto;padding:44px 24px 96px;
   padding-right:max(24px,env(safe-area-inset-right,0px));
   padding-bottom:calc(96px + env(safe-area-inset-bottom,0px))}
 .pane{display:none}.pane.on{display:block}
-.src{color:var(--fg3);font-size:12px;margin-bottom:2px;font-family:ui-monospace,Menlo,monospace}
-.src.gen{margin-bottom:34px;opacity:.8}
+main:focus{outline:none}                         /* 跳到正文落焦时不画框，正文自己就是目标 */
+.src{color:var(--fg2);font-size:12.5px;margin-bottom:26px}
+/* 缺报告的档：一句话说清为什么没有、几点会有，不让读者对着空白猜 */
+.none{margin:6px 0 0;padding:14px 16px;border:1px dashed var(--bd2);border-radius:10px;
+  color:var(--fg2);font-size:14.5px;line-height:1.7}
 
+h1,h2,h3{text-wrap:balance}
 h1{font-size:27px;line-height:1.45;margin:0 0 26px;color:var(--fgh);font-weight:650;letter-spacing:0}
 h2{font-size:20px;line-height:1.5;margin:52px 0 16px;color:var(--fgh);font-weight:650;letter-spacing:0}
 h3{font-size:17px;line-height:1.6;margin:34px 0 10px;color:var(--fgh2);font-weight:600}
@@ -139,6 +167,10 @@ blockquote p{margin:9px 0}
    数字用等宽字形：星标速率、评分、评价人数这些列要上下对齐才读得出量级差。 */
 table{border-collapse:collapse;width:100%;font-size:14px;line-height:1.65;
   font-variant-numeric:tabular-nums}
+/* 多列表格在窄屏按列数给最小宽度，超出交给 .tw 横滚。不给的话 7 列会硬挤进 358px，
+   片名断成两字一行。:has() 不支持的老浏览器退回硬挤，只是难看，不丢内容。 */
+.tw table:has(tr>:nth-child(6)){min-width:560px}
+.tw table:has(tr>:nth-child(9)){min-width:820px}
 th,td{border:0;border-bottom:1px solid var(--bd3);padding:10px 14px 10px 0;
   text-align:left;vertical-align:top}
 th{color:var(--fg2);font-weight:600;white-space:nowrap;font-size:13px;
@@ -167,18 +199,6 @@ em{color:var(--fg2);font-style:normal}
 .chip.draft{background:var(--warn-bg);border-color:transparent;color:var(--warn-fg)}
 .new{margin-left:9px;font-size:11px;font-weight:600;vertical-align:2px;
   padding:2px 8px;border-radius:6px;background:var(--chip-bg);color:var(--chip-fg)}
-.status{display:flex;gap:7px;flex-wrap:wrap;max-width:860px;margin:0 auto}
-.status.alert{padding:8px 11px;border-radius:8px;background:var(--alert-bg);
-  border:1px solid var(--alert-bd)}
-.st{font-size:12px;padding:3px 10px;border-radius:6px;border:1px solid var(--bd2);
-  background:transparent;color:var(--fg3)}
-.st[title]{cursor:help}
-.st.ok{color:var(--ok-fg);border-color:var(--ok-bd)}
-.st.bad{color:var(--bad-fg);border-color:var(--bad-bd);background:var(--bad-bg);font-weight:600}
-.st.warn{color:var(--warn-fg);border-color:var(--warn-bd)}
-.st.pend{opacity:.55}
-.st .m{font-style:normal;margin-right:5px}
-/* 语言切换：跟日期导航同一行，低调但点得到。当前语言不是链接，避免自己链自己 */
 /* ── 英文排版覆盖 ────────────────────────────────────────────────────
    上面那套 16.5px/1.9 + .01em 字距是按中文调的：CJK 方块字需要更大的行距与
    一点字距才透气。原样套在拉丁文字上有三个问题，实测都量过：
@@ -196,14 +216,10 @@ html[lang="en"] .pane li,
 html[lang="en"] .pane blockquote{max-width:34em}
 html[lang="en"] h1{letter-spacing:-.01em}
 html[lang="en"] h2,html[lang="en"] h3{letter-spacing:-.005em}
-/* 状态条：英文标签更宽，四个 chip 在 375px 上要占掉 85% 的行宽。
-   收紧勾号与文字之间的空隙和左右内边距，把它压回和中文相当的比例。 */
-html[lang="en"] .st{letter-spacing:normal;padding-left:9px;padding-right:9px}
-html[lang="en"] .st .m{margin-right:3px}
 
 /* 语言切换：一个框里三段，不是三个独立按钮。除了视觉上是一个整体，也更窄——
    省掉了三份外边距与按钮之间的间隙。当前语言不是链接，避免自己链自己。 */
-.lang{display:inline-flex;align-items:stretch;margin-left:4px;
+.lang{display:inline-flex;align-items:stretch;
   border:1px solid var(--bd2);border-radius:7px;overflow:hidden;background:var(--bg2)}
 .lang i{display:none;font-style:normal}          /* 缩写，窄屏才出来 */
 .lang a,.lang span{display:flex;align-items:center;padding:5px 9px;font-size:12.5px;
@@ -215,7 +231,7 @@ html[lang="en"] .st .m{margin-right:3px}
   background:var(--bg5);color:var(--fg2);font-size:13.5px;line-height:1.7;border-radius:0 4px 4px 0}
 footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
 footer.dis{margin-top:72px;padding-top:22px;border-top:1px solid var(--bd);
-  color:var(--fg3);font-size:12.5px;line-height:1.95}
+  color:var(--fg3);font-size:13px;line-height:1.9}
 footer.dis a{color:var(--fg2);border-bottom:1px solid var(--bd2)}
 footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 
@@ -227,28 +243,30 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   .tabbar{padding:8px 16px;
     padding-left:max(16px,env(safe-area-inset-left,0px));
     padding-right:max(16px,env(safe-area-inset-right,0px))}
-  .bar{gap:9px;margin-bottom:9px}
-  h1.site{font-size:14.5px;width:100%}
-  h1.site span{display:block;margin:2px 0 0;font-size:11px}
-  .nav{margin-left:0;width:100%;gap:6px;flex-wrap:wrap;row-gap:7px}
-  /* 语言块按自然宽度、不参与等分，否则它会把日期下拉挤没（实测挤到 14px）。
-     窄屏换成缩写：简/繁/EN 约 66px，完整标签要 142px。 */
-  .lang{margin-left:0;flex:0 0 auto;order:9;align-self:stretch}
+  .bar{gap:9px}
+  /* 第一行：标题 + 语言/主题；第二行：日期导航独占。标题不换行，宽到放不下就省略，
+     否则两行标题会把页头顶回三行。 */
+  h1.site{font-size:14.5px;flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .tools{order:1;margin-left:auto}
+  .nav{order:2;margin-left:0;width:100%;gap:6px}
+  /* 窄屏换成缩写：简/繁/EN 约 66px，完整标签要 142px。 */
+  .lang{flex:0 0 auto;align-self:stretch}
   .lang b{display:none}
   .lang i{display:inline}
   /* 44px 是 Apple 给的最小点按尺寸（原来是 38px）。日期导航与 Tab 是手机上仅有的
      高频操作，多占这 6px 换的是不再点空。 */
-  .nav a,.nav span.dis,.nav select,.nav button.tg{flex:1;text-align:center;padding:9px 6px;
+  .nav a,.nav span.dis,.nav select{flex:1;text-align:center;padding:9px 6px;
     font-size:13px;min-height:44px;white-space:nowrap;display:flex;align-items:center;
     justify-content:center}
-  /* min-width 不能给 0：flex 会把它一路压到看不见。88px 刚好放下 09-16 加箭头 */
-  .nav select{flex:1.4 1 88px;min-width:88px}
-  .nav a.all,.nav button.tg{flex:0 0 auto;padding:9px 12px}
+  .tools button.tg{padding:9px 12px;min-height:44px;display:flex;align-items:center}
+  /* 下拉是主控件，多分一些；min-width 不能给 0：flex 会把它一路压到看不见 */
+  .nav select{flex:2.2 1 120px;min-width:88px}
+  .nav a.all{flex:0 0 auto;padding:9px 12px}
   /* 「全部 N 天」在窄屏是冗余的：日期下拉最后一项就是去归档。
      省下它约 56px，导航才挤得进一行——两行会让 header 从 133 涨到 178px。 */
   .nav a.all{display:none}
   .tabs{gap:4px}
-  .tab{flex:1 1 auto;padding:9px 8px;font-size:13.5px;min-height:44px}
+  .tab{flex:1 1 auto;justify-content:center;padding:9px 8px;font-size:13.5px;min-height:44px}
   .tab em{display:none}
   main{padding:28px 16px 64px;
     padding-left:max(16px,env(safe-area-inset-left,0px));
@@ -265,19 +283,32 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   blockquote{margin:20px 0;padding-left:15px;font-size:15px}
   pre{padding:12px;font-size:12.5px}
   ul,ol{padding-left:19px}
-  .status{gap:5px}
-  .st{font-size:11px;padding:2px 8px}
-  footer.dis{margin-top:52px;font-size:12px}
+  footer.dis{margin-top:52px;font-size:12.5px}
+  /* 归档页一行四个 chip 要放在日期旁边，不换行：收紧内边距与间距 */
+  .arch .chip{padding:1px 6px;margin:1px 3px 1px 0;font-size:11.5px}
+  .arch td{padding:8px 6px}
+}
+/* 480 以下 tab 用短名：全称在 360 宽会顶成两行（英文 390 就两行），四个短名 320 宽
+   也能一行。「最新」小标同时藏起来，标题 + 语言/主题才保证一行。 */
+@media (max-width:480px){
+  .tab .l{display:none}
+  .tab .s{display:inline}
+  h1.site .new{display:none}
 }
 @media (max-width:380px){
-  .tab{flex:1 1 calc(50% - 2px);font-size:13px;padding:9px 5px}
+  /* 标题 + 语言/主题一行：320 宽下实测差 2px 就换行，页头多出一整行。收紧几处凑出余量 */
+  .bar{gap:6px}
+  h1.site{font-size:13.5px}
+  .tools{gap:4px}
+  .tab{font-size:13px;padding:9px 6px;gap:4px}
   .nav a,.nav span.dis{padding:9px 3px;font-size:12px}
   /* 320px 上只留箭头：省下两侧各约 30px，导航才不用换行（换行会让 header 从
      133 涨到 178px）。相邻日期在下拉里看得到，不算信息丢失。 */
   .nav a em{display:none}
   .nav select{flex:1.6 1 76px;min-width:76px}
   .lang a,.lang span{padding:5px 7px;font-size:11.5px}
-  .nav a.all,.nav button.tg{padding:9px 9px}
+  .nav a.all{padding:9px 9px}
+  .tools button.tg{padding:9px 8px}
   table{font-size:12px}
   th,td{padding:7px 8px 7px 0}
   main{padding:22px 14px 56px}
@@ -291,7 +322,7 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 /* 系统里开了「减弱动态效果」就别再动。这几处 transition 都只是点缀，
    关掉不影响任何信息。 */
 @media (prefers-reduced-motion:reduce){
-  a,.tab,.nav a,.nav button.tg,.tw::after{transition:none}
+  a,.tab,.nav a,.tools button.tg,.tw::after{transition:none}
 }
 
 /* 顶部 tabbar 是 sticky 的（约 50px 高）：键盘 Tab 进正文、或将来做标题锚点时，
