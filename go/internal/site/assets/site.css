@@ -269,7 +269,6 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   .nav select{flex:2.2 1 120px;min-width:88px;min-height:44px;padding:9px 6px;font-size:13px}
   .tools button.tg{padding:9px 12px;min-height:44px;display:flex;align-items:center}
   /* 下拉是主控件，多分一些；min-width 不能给 0：flex 会把它一路压到看不见 */
-  .nav select{flex:2.2 1 120px;min-width:88px}
   .nav a.all{flex:0 0 auto;padding:9px 12px}
   /* 「全部 N 天」在窄屏是冗余的：日期下拉最后一项就是去归档。
      省下它约 56px，导航才挤得进一行——两行会让 header 从 133 涨到 178px。 */
