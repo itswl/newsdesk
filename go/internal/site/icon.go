@@ -28,7 +28,7 @@ var (
 	iconBgTop    = rgb{61, 120, 238}  // #3d78ee
 	iconBgBottom = rgb{22, 41, 94}    // #16295e
 	iconCardCol  = rgb{255, 255, 255} // 卡片
-	iconTitleCol = rgb{59, 123, 240}  // 站点 accent #3b7bf0，最上面那条
+	iconTitleCol = rgb{47, 111, 228}  // 站点 accent #2f6fe4，最上面那条
 	iconLineCol  = rgb{178, 194, 220} // 别调更浅：主屏上图标只有 60px，浅了看成一团白
 	iconShadow   = rgb{8, 18, 42}
 )
