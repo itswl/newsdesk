@@ -1,8 +1,12 @@
+// 栏目 tab：选中态同时写在 class 和 aria-selected 上，读屏靠后者知道选了哪一档。
+// 方向键有意不接管（留给换天，见下面 onkeydown），tab 之间用 Tab 键移动。
 document.querySelectorAll('.tab:not(.absent)').forEach(function(b){
   b.onclick=function(){
-    document.querySelectorAll('.tab').forEach(function(x){x.classList.remove('on')});
+    document.querySelectorAll('.tab').forEach(function(x){
+      x.classList.remove('on'); x.setAttribute('aria-selected','false');
+    });
     document.querySelectorAll('.pane').forEach(function(x){x.classList.remove('on')});
-    b.classList.add('on');
+    b.classList.add('on'); b.setAttribute('aria-selected','true');
     document.getElementById('p-'+b.dataset.t).classList.add('on');
     history.replaceState(null,'','#'+b.dataset.t);
     window.scrollTo(0,0);
@@ -23,7 +27,9 @@ function go(dir){
   var el=document.getElementById(dir>0?'nextday':'prevday');
   if(el&&el.href) location.href=el.href;
 }
-// 桌面：左右方向键换天
+// 桌面：左右方向键换天。焦点落在 tab 上时也一样——APG 的 tabs 模式要求方向键在 tab
+// 之间移动，这里有意偏离：换天是最高频的动作，而点完 tab 焦点就在它上面，若在这时
+// 吞掉方向键，「点档、再按方向键换天」这条最常见的路径就断了。
 document.onkeydown=function(e){
   if(e.target.tagName==='SELECT'||e.metaKey||e.ctrlKey) return;
   if(e.key==='ArrowLeft') go(-1);

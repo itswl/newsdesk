@@ -204,7 +204,9 @@ func (b *Builder) writeDay(day string) error {
 		label := b.T("panel." + t.Key)
 		path, ok := b.reportFile(day, t)
 		if !ok {
-			fmt.Fprintf(&tabs, `<button class="tab absent" data-t="%s" title="%s">%s</button>`,
+			// 缺报告的档也占一个 tab 位（读者要知道「今天没有这份」），但标成不可用；
+			// 它没有对应面板，所以不给 aria-controls。
+			fmt.Fprintf(&tabs, `<button class="tab absent" data-t="%s" role="tab" aria-selected="false" aria-disabled="true" title="%s">%s</button>`,
 				t.Key, esc(b.T("tab.absent")), esc(label))
 			continue
 		}
@@ -223,12 +225,15 @@ func (b *Builder) writeDay(day string) error {
 			badge = fmt.Sprintf(` <em title="%s">%s</em>`,
 				esc(b.T("tab.draft_title")), esc(b.T("tab.draft_badge")))
 		}
-		on := ""
+		on, selected := "", "false"
 		if first {
-			on = " on"
+			on, selected = " on", "true"
 		}
-		fmt.Fprintf(&tabs, `<button class="tab%s" data-t="%s"%s>%s%s</button>`,
-			on, t.Key, tip, esc(label), badge)
+		// role / aria-selected 让读屏报出「哪一档是选中的」；aria-controls 与面板的
+		// aria-labelledby 互指。选中态先按服务端的第一档写死，之后由 site.js 在点击
+		// 与深链（#douban）时改写。方向键有意不归 tab——见 AGENTS.md「栏目 tab」一节。
+		fmt.Fprintf(&tabs, `<button class="tab%s" data-t="%s" id="t-%s" role="tab" aria-selected="%s" aria-controls="p-%s"%s>%s%s</button>`,
+			on, t.Key, t.Key, selected, t.Key, tip, esc(label), badge)
 		st, err := os.Stat(path)
 		at := b.genAt
 		modTime := at.Unix()
@@ -236,8 +241,8 @@ func (b *Builder) writeDay(day string) error {
 			at = st.ModTime()
 			modTime = st.ModTime().Unix()
 		}
-		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s"><div class="src">%s</div>%s%s</section>`,
-			on, t.Key, esc(relTo(b.o.Root, path)), b.genSrcNote(at), body)
+		fmt.Fprintf(&panes, `<section class="pane%s" id="p-%s" role="tabpanel" aria-labelledby="t-%s"><div class="src">%s</div>%s%s</section>`,
+			on, t.Key, t.Key, esc(relTo(b.o.Root, path)), b.genSrcNote(at), body)
 		first = false
 
 		b.entries = append(b.entries, entry{Day: day, Key: t.Key, Label: label,
@@ -263,12 +268,12 @@ func (b *Builder) writeDay(day string) error {
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
 		viewport+`<title>%s %s</title>%s%s%s<style>%s</style></head><body>`+
 		`<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s</div>%s</header>`+
-		`<nav class="tabbar"><div class="tabs">%s</div></nav><main>%s`+
+		`<nav class="tabbar"><div class="tabs" role="tablist" aria-label="%s">%s</div></nav><main>%s`+
 		`<footer class="dis">%s%s</footer></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(b.T("site.name")), day,
 		b.headIcons(), b.headLinks(day+".html"), headJS, css,
 		esc(b.T("site.name")), day, latest, b.nav(day), status,
-		tabs.String(), main, note, b.disclaimer(), js)
+		esc(b.T("nav.tabs_label")), tabs.String(), main, note, b.disclaimer(), js)
 
 	return os.WriteFile(filepath.Join(b.o.Out, day+".html"), []byte(doc), 0o644)
 }

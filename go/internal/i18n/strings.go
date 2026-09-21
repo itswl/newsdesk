@@ -67,6 +67,7 @@ var s = map[string][2]string{
 	"nav.back":        {"回到最新 (%s) ›", "Back to latest (%s) ›"},
 	"nav.theme":       {"切换深浅色", "Toggle light/dark"},
 	"nav.lang":        {"切换语言", "Switch language"},
+	"nav.tabs_label":  {"栏目", "Sections"},
 
 	"tab.absent": {"当天没有这份报告——任务没跑，或者跑了但失败了",
 		"No such report for this day — the task did not run, or it failed."},

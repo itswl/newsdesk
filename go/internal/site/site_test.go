@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/itswl/newsdesk/internal/i18n"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 // fixture 造一个最小仓库：若干天的报告。
@@ -690,5 +691,47 @@ func TestIconScalesWithSize(t *testing.T) {
 		if !(bl > r && bl > g) {
 			t.Errorf("%dpx 的左上角不是深蓝底色：%04x %04x %04x", b.Dx(), r, g, bl)
 		}
+	}
+}
+
+// 栏目 tab 要有 ARIA 语义：读屏靠 role / aria-selected 知道「哪一档是选中的」，
+// aria-controls / aria-labelledby 把 tab 与面板对上。引用的 id 必须真的存在——
+// 指向不存在 id 的 aria-controls 不报错，只是读屏什么也报不出来。
+// 方向键有意不归 tab（留给换天），所以这里不测键盘，只测语义。
+func TestTabsCarryARIASemantics(t *testing.T) {
+	root := fixture(t, "2026-09-17") // fixture 只有 ai 与 douban 两份报告，另两档缺席
+	body := read(t, filepath.Join(build(t, Options{Root: root}), "2026-09-17.html"))
+
+	if !strings.Contains(body, `<div class="tabs" role="tablist" aria-label="`) {
+		t.Error("tab 容器缺 role=tablist / aria-label")
+	}
+	if n := strings.Count(body, `role="tab"`); n != len(task.All) {
+		t.Errorf("role=tab 应有 %d 个（含缺席的档），实际 %d", len(task.All), n)
+	}
+	if n := strings.Count(body, `aria-selected="true"`); n != 1 {
+		t.Errorf("选中的 tab 应恰好一个，实际 %d", n)
+	}
+	// 第一档（ai）默认选中；缺席的档标不可用、不选中、不指向面板
+	if !strings.Contains(body, `<button class="tab on" data-t="ai" id="t-ai" role="tab" aria-selected="true" aria-controls="p-ai">`) {
+		t.Error("第一档没有按选中态渲染")
+	}
+	if !strings.Contains(body, `class="tab absent" data-t="trending" role="tab" aria-selected="false" aria-disabled="true"`) {
+		t.Error("缺席的档没有标成 aria-disabled")
+	}
+	// 面板与 tab 互指，且引用的 id 真的存在
+	for _, m := range regexp.MustCompile(`aria-(?:controls|labelledby)="([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		if !strings.Contains(body, `id="`+m[1]+`"`) {
+			t.Errorf("%s 指向不存在的 id", m[0])
+		}
+	}
+	if n := strings.Count(body, `role="tabpanel"`); n != 2 {
+		t.Errorf("面板应有 2 个（ai、douban），实际 %d", n)
+	}
+	if !strings.Contains(body, `id="p-douban" role="tabpanel" aria-labelledby="t-douban"`) {
+		t.Error("面板没有 aria-labelledby 指回 tab")
+	}
+	// 选中态由脚本在点击与深链时改写
+	if !strings.Contains(body, `setAttribute('aria-selected'`) {
+		t.Error("site.js 没有维护 aria-selected")
 	}
 }
