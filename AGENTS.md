@@ -309,7 +309,7 @@ Worker 那层按扩展名给 content-type，别退回无条件的 `text/html`—
 max_tokens` 把后半截砍了——两者都不报错，页面照常渲染。翻译器比对结构指纹并显式
 检测截断。
 
-**状态条的提示文字不能在渲染层拼死。** `todayState()` 只回状态与时刻，句子由 `i18n.T`
+**tab 状态说明的文字不能在渲染层拼死。** `todayState()` 只回状态与时刻，句子由 `i18n.T`
 按站点语言组——在那边拼死中文的话英文/繁中版就没法翻。
 
 **「列进 SITE_LANGS」不等于「开启」。** 判定在 `internal/langs`：`en` 还要 `FALLBACK_*`

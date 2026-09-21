@@ -51,7 +51,7 @@ func (b *Builder) todayState() map[string]dayState {
 	}
 	out := map[string]dayState{}
 	for _, t := range task.All {
-		// 状态条表达的是「任务今天跑没跑」，不是「翻译完没完」——
+		// tab 的状态说明表达的是「任务今天跑没跑」，不是「翻译完没完」——
 		// 所以固定看简体原文，英文版缺翻译不该显示成任务没跑。
 		zh := *b
 		zh.o.Lang = "zh-CN"

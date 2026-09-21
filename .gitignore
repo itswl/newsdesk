@@ -17,3 +17,6 @@
 /bin/
 /ts/node_modules/
 /ts/dist/
+
+# macOS
+.DS_Store
