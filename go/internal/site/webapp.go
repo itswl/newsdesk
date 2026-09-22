@@ -1,6 +1,7 @@
 package site
 
 import (
+	_ "embed" // sw.js 以 string 嵌进二进制，不依赖运行时的文件布局
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -25,6 +26,9 @@ const (
 //
 // 图标就是照这条走的第一批：png / svg / ico / webmanifest。
 
+//go:embed assets/sw.js
+var swjs string
+
 // writeAssets 写图标与 webapp 清单。
 //
 // 三语各写一份，不共用一套：清单里的名字要跟着语言走。页面里用相对路径引用
@@ -33,6 +37,14 @@ const (
 func (b *Builder) writeAssets() error {
 	for name, data := range iconFiles(b.T("site.name")) {
 		if err := os.WriteFile(filepath.Join(b.o.Out, name), data, 0o644); err != nil {
+			return err
+		}
+	}
+	// Service Worker 只由根语言目录产出一份：页面注册的是绝对路径 /sw.js，
+	// 一个 SW 管整个源站（含 /<lang>/ 子目录），各语言目录再来一份只会让 scope 散掉。
+	// 单语言站点根语言就是它自己，照常写出。三处约定见文件顶部的注释。
+	if b.o.Lang == b.rootLang {
+		if err := os.WriteFile(filepath.Join(b.o.Out, "sw.js"), []byte(swjs), 0o644); err != nil {
 			return err
 		}
 	}

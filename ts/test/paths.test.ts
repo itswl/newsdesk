@@ -68,3 +68,20 @@ test('status.json 的缓存必须比别的短得多', () => {
   assert.ok(ttlFor('status.json') < ttlFor('2026-09-17.html'));
   assert.equal(ttlFor('en/status.json'), ttlFor('status.json'));
 });
+
+
+// Service Worker 只在根目录产出一份，注册的是根路径；任意 .js 不能跟着沾光
+test('sw.js 只在根放行，任意 .js 不放行', () => {
+  assert.ok(allowed('/sw.js'));
+  assert.ok(!allowed('/en/sw.js'), 'SW 只有一份，语言目录里没有');
+  assert.ok(!allowed('/icon.js'));
+  assert.ok(!allowed('/evil.js'));
+  assert.ok(!allowed('/en/evil.js'));
+});
+
+// SW 的更新检查读 sw.js：类型打错浏览器拒绝装、且不报错；缓存留久了新 SW 上不了线
+test('sw.js 的类型与缓存', () => {
+  assert.equal(contentType('sw.js'), 'text/javascript; charset=utf-8');
+  assert.ok(ttlFor('sw.js') <= 60, '新 SW 要能及时上线，误缓存的 404 也要快点自愈');
+  assert.ok(ttlFor('sw.js') < ttlFor('2026-09-17.html'));
+});

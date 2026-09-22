@@ -105,6 +105,16 @@ document.onkeydown=function(e){
     if(!document.documentElement.dataset.theme) paint();
   });
 })();
+// Service Worker：给「看过的页面」留一条不过网络的路。晚高峰到边缘的线路
+// 可能整段不通（实测），没它的话每次打开都得赌线路。注册放在 load 之后不占
+// 首屏；只有安全上下文才有（https 与 localhost；isSecureContext 是标准判定，
+// 别退回比对 protocol——那会把 localhost 也拦掉）。失败静默：有它更好，没它照常读。
+// sw.js 只在站点根（一个 SW 管整个源站，含语言子目录），所以注册用绝对路径。
+if ('serviceWorker' in navigator && window.isSecureContext) {
+  addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
 // 表格还能继续横向滚时才显示右缘渐变
 (function(){
   function sync(w){var d=w.firstElementChild;
