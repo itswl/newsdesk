@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // escape 是这个包的安全基石：所有来自源文本的内容都必须经过它。
@@ -32,8 +33,12 @@ func escape(s string) string {
 }
 
 var (
-	reCode   = regexp.MustCompile("`([^`]+)`")
-	reLink   = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
+	reCode = regexp.MustCompile("`([^`]+)`")
+	reLink = regexp.MustCompile(`\[([^\]]*)\]\(([^)\s]+)(?:\s+"[^"]*")?\)`)
+	// 裸 URL：模型偶尔不按契约写 [标题](URL)，把地址直接贴出来。`<` `>` 不进
+	// 地址——`<https://…>` 那种尖括号写法留在括号外当纯文本；占位符的 \x00
+	// 必须排除，否则占位符会被二次处理。
+	reURL    = regexp.MustCompile(`https?://[^\s\x00<>"]+`)
 	reBold   = regexp.MustCompile(`\*\*([^*]+)\*\*`)
 	reItalic = regexp.MustCompile(`(^|[^*])\*([^*]+)\*`)
 	reDel    = regexp.MustCompile(`~~([^~]+)~~`)
@@ -65,6 +70,28 @@ func inline(s string) string {
 		return fmt.Sprintf("\x00L%d\x00", len(links)-1)
 	})
 
+	// 裸 URL 自动成链，与链接同一套占位—回填机制。尾部的标点（中英文句读、
+	// 收括号）算文章的，不算地址的；安全上走同一个 safeURL 白名单。
+	// 09-22 的报告把来源写成了「[1] 媒体 — 标题：https://…」的裸地址，渲染出来
+	// 又长又点不了——兜这一手，别指望模型每次都守格式。
+	var urls []string
+	s = reURL.ReplaceAllStringFunc(s, func(m string) string {
+		// 尾部剥到纯 ASCII 为止：粘在地址后面的中文字与标点（「…。好」）是
+		// 文章的，不是地址的；剥掉的尾巴要作为正文接回去，不能吞掉。
+		u := m
+		for u != "" {
+			r, size := utf8.DecodeLastRuneInString(u)
+			if r > 126 || strings.ContainsRune(".,;:!?…\"'。、；：！？）」』》，》〉", r) {
+				u = u[:len(u)-size]
+				continue
+			}
+			break
+		}
+		urls = append(urls, u)
+		// 占位符后面接回被剥掉的尾巴，它随后与其他正文一起转义
+		return fmt.Sprintf("\x00U%d\x00", len(urls)-1) + m[len(u):]
+	})
+
 	s = escape(s)
 	s = inlineEmphEscaped(s)
 
@@ -76,6 +103,10 @@ func inline(s string) string {
 	}
 	for i, l := range links {
 		s = strings.ReplaceAll(s, fmt.Sprintf("\x00L%d\x00", i), l)
+	}
+	for i, u := range urls {
+		s = strings.ReplaceAll(s, fmt.Sprintf("\x00U%d\x00", i),
+			fmt.Sprintf(`<a href="%s" rel="noopener noreferrer">%s</a>`, escape(u), escape(u)))
 	}
 	return s
 }

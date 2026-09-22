@@ -168,3 +168,31 @@ func TestEscapeIsTotal(t *testing.T) {
 		}
 	}
 }
+
+// 裸 URL 自动成链：模型不按契约写 [标题](URL) 时兜底（09-22 的来源就是裸地址）。
+// 尾部的标点与粘连的中文算文章的，不算地址的，且要归还原文不能吞掉；
+// & 在 href 里正确转义；已有的链接语法不能被二次包一层。
+func TestBareURLsAreLinked(t *testing.T) {
+	p := func(inner string) string { return "<p>" + inner + "</p>\n" }
+	cases := map[string]string{
+		"看 https://example.com/a。好":    p(`看 <a href="https://example.com/a" rel="noopener noreferrer">https://example.com/a</a>。好`),
+		"（https://example.com/x）":      p(`（<a href="https://example.com/x" rel="noopener noreferrer">https://example.com/x</a>）`),
+		"<https://example.com>":        p(`&lt;<a href="https://example.com" rel="noopener noreferrer">https://example.com</a>&gt;`),
+		"https://example.com/?a=1&b=2": p(`<a href="https://example.com/?a=1&amp;b=2" rel="noopener noreferrer">https://example.com/?a=1&amp;b=2</a>`),
+		"[标题](https://example.com)":    p(`<a href="https://example.com" rel="noopener noreferrer">标题</a>`),
+		"javascript:alert(1)":          p("javascript:alert(1)"),
+		// 连续行没有列表标记会被并成一段，段里每个裸地址要各自成链
+		"[1] A — t：https://a.com/1\n[2] B — t：https://b.com/2": p(`[1] A — t：<a href="https://a.com/1" rel="noopener noreferrer">https://a.com/1</a>` + " " + `[2] B — t：<a href="https://b.com/2" rel="noopener noreferrer">https://b.com/2</a>`),
+	}
+	for src, want := range cases {
+		if got := Render(src); got != want {
+			t.Errorf("%q →\n%s\n想要:\n%s", src, got, want)
+		}
+	}
+	// 混排：链接与裸地址相邻，各自成链互不吞并
+	got := Render("[A](https://a.com) 然后 https://b.com/x。")
+	want := p(`<a href="https://a.com" rel="noopener noreferrer">A</a> 然后 <a href="https://b.com/x" rel="noopener noreferrer">https://b.com/x</a>。`)
+	if got != want {
+		t.Errorf("混排 →\n%s\n想要:\n%s", got, want)
+	}
+}
