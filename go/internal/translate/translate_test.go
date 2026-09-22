@@ -3,6 +3,7 @@ package translate
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // 译文最危险的失败不是「翻错」，是**结构被改**和**输出被截断**——
@@ -143,6 +145,53 @@ func TestBaseURLNormalisation(t *testing.T) {
 		got := root + "/v1/messages"
 		if strings.Contains(got, "/v1/v1/") {
 			t.Errorf("%s 归一化后仍然重复: %s", in, got)
+		}
+	}
+}
+
+// 09-22 实际踩到的形状：来源段 49 行连成一个 6555 字符的段落，没有列表标记也
+// 没有空行，于是二级/三级标题与空行分段三级都切不动。老实现在这里返回整篇，
+// 12k 字符一次送出去，译文撞上 max_tokens 被砍掉后半截——而截断是静默的。
+// 现在必须逐行切下去，每块都在限内。
+func TestUnsplittableParagraphStillChunked(t *testing.T) {
+	var sb strings.Builder
+	sb.WriteString("# 报告\n\n正文一段。\n\n## 来源\n\n")
+	for i := 1; i <= 49; i++ {
+		sb.WriteString(fmt.Sprintf("[%d] 媒体名 — 一条足够长的标题用来把这一段撑过上限：https://example.com/a-fairly-long-path/%d\n", i, i))
+	}
+	src := sb.String()
+	if len(src) <= chunkChars {
+		t.Fatalf("样本没到切块门槛（%d 字符），这条测试就没意义了", len(src))
+	}
+	cs := Chunks(src)
+	if n := maxLen(cs); n > chunkChars {
+		t.Errorf("最大块 %d 字符，超过上限 %d：兜底又变回「整篇当一块」了", n, chunkChars)
+	}
+	if strings.Join(cs, "") != src {
+		t.Error("拼回去必须无损")
+	}
+	// 这一级应当仍在行边界上切，别无谓地切进行中间
+	for i, c := range cs[:len(cs)-1] {
+		if !strings.HasSuffix(c, "\n") {
+			t.Errorf("第 %d 块没有切在行边界上", i+1)
+		}
+	}
+}
+
+// 单行本身就超限时只能按字节硬切，但切点必须落在 rune 边界上——
+// 中文一个字三字节，从中间断开就是乱码，而乱码会被当成「翻译质量问题」查很久。
+func TestOversizedSingleLineSplitsOnRuneBoundary(t *testing.T) {
+	src := strings.Repeat("中文内容", chunkChars) // 单行，远超上限，且全是多字节字符
+	cs := Chunks(src)
+	if n := maxLen(cs); n > chunkChars {
+		t.Errorf("最大块 %d 字符，超过上限 %d", n, chunkChars)
+	}
+	if strings.Join(cs, "") != src {
+		t.Error("拼回去必须无损")
+	}
+	for i, c := range cs {
+		if !utf8.ValidString(c) {
+			t.Errorf("第 %d 块不是合法 UTF-8：切点落在了 rune 中间", i+1)
 		}
 	}
 }

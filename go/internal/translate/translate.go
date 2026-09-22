@@ -20,6 +20,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 const (
@@ -146,8 +147,17 @@ func ShapeOf(md string) Shape {
 
 // Chunks 按标题切块，切点在标题之前，所以拼回去是无损的。
 //
-// 三级切分逐级变细：单个二级小节本身就超限时必须继续往下切——只按 ## 切的话
-// 那一节会原样送出去照样被截断（实测 9.4k 字符的一节就会）。
+// 逐级变细：二级标题 → 三级标题 → 空行分段 → 逐行 → 按 rune 硬切。
+// 单个二级小节本身就超限时必须继续往下切——只按 ## 切的话那一节会原样送出去
+// 照样被截断（实测 9.4k 字符的一节就会）。
+//
+// ⚠️ **最后一级必须保证切得动。** 这里以前是「三种结构切法都不行就 return
+// []string{md}」，整篇当一块——那不是降级，是一道悬崖：只要报告里有**一个**
+// 超长段落，整篇就原样送出去，然后撞上 max_tokens 被截断。09-22 的 AI 报告
+// 正是如此：来源段 49 行连成一个 6555 字符的段落（没有列表标记也没有空行），
+// 空行分段那一级切不动它，于是 12k 字符整篇发出去，译文被砍掉后半截。
+// 所以兜底改成逐行切，单行仍超限的再按 rune 边界硬切，返回值恒满足
+// maxLen(out) <= chunkChars。
 func Chunks(md string) []string {
 	if len(md) <= chunkChars {
 		return []string{md}
@@ -165,7 +175,35 @@ func Chunks(md string) []string {
 			return out
 		}
 	}
-	return []string{md}
+	// 逐行是最后一个还能保住 Markdown 结构的切法（来源段那种一行一条的形状
+	// 正好在这一级被救回来）。再不行才按字节硬切，那会切进段落中间，结构指纹
+	// 可能因此报差异——但「结构对不上」有告警，「译文少一半」没有。
+	return merge(hardSplit(strings.SplitAfter(md, "\n")))
+}
+
+// hardSplit 把仍然超限的块按字节上限强行切开。切点退到 rune 边界上，
+// 不切坏 UTF-8——中文一个字三字节，从中间断开会变成乱码。
+func hardSplit(parts []string) []string {
+	var out []string
+	for _, p := range parts {
+		for len(p) > chunkChars {
+			cut := chunkChars
+			for cut > 0 && !utf8.RuneStart(p[cut]) {
+				cut--
+			}
+			if cut == 0 {
+				// 理论上到不了：单个 rune 最多 4 字节，远小于 chunkChars。
+				// 真到了说明上限被调到极小，按字节切总比死循环强。
+				cut = chunkChars
+			}
+			out = append(out, p[:cut])
+			p = p[cut:]
+		}
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // splitAtLinePrefix 在以 prefix 开头的行之前切开，保留全部内容（无损）。
