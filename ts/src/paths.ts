@@ -17,7 +17,9 @@ export function normalize(pathname: string): string {
 // ⚠️ 站点新增一种对外文件类型时，这里与 contentType、以及 Go 那边的产出
 // （site.writeAssets 一带）要一起改。漏了这里的话图标在桶里躺着但取不到——
 // 表现是「加到主屏还是老样子」，本地怎么看都看不出问题。
-const ALLOW = /^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(?:html|xml|json|webmanifest|svg|png|ico)$/;
+// sw.js 单独精确放行根路径：一个 SW 管整个源站，只在根目录产出。不给扩展组加
+// js——那会把任意 .js（根的和语言目录里的）都放进来，白名单就形同虚设。
+const ALLOW = /^\/(?:[A-Za-z]{2}(?:-[A-Za-z]{2,4})?\/)?[A-Za-z0-9._-]+\.(?:html|xml|json|webmanifest|svg|png|ico)$|^\/sw\.js$/;
 
 export function allowed(path: string): boolean {
   return ALLOW.test(path);
@@ -29,6 +31,9 @@ export function allowed(path: string): boolean {
 // 就被 CDN 藏起来了，监控看到的永远是若干分钟前的健康状态。
 const TTL: Record<string, number> = {
   'index.html': 120, 'feed.xml': 120, 'status.json': 30, 'archive.html': 300,
+  // SW 的更新检查读这个文件：留久了新 SW 上不了线；回源缓住的 404（发布前探过）
+  // 也要快点自愈，否则注册一直失败
+  'sw.js': 60,
 };
 const TTL_DEFAULT = 300;
 
@@ -53,6 +58,8 @@ export function ttlFor(name: string): number {
  * 报错——只是订阅者再也收不到更新。
  */
 export function contentType(name: string): string {
+  // 只对白名单放行的 /sw.js 生效；打错类型浏览器拒绝把它装成 SW，而且不报错
+  if (name.endsWith('.js')) return 'text/javascript; charset=utf-8';
   if (name.endsWith('.xml')) return 'application/atom+xml; charset=utf-8';
   if (name.endsWith('.json')) return 'application/json; charset=utf-8';
   // 清单必须是 manifest+json：打错类型 Chrome 直接忽略，而且不报错，只是

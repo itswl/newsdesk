@@ -871,3 +871,36 @@ func TestHeadCarriesShareMetadata(t *testing.T) {
 		}
 	}
 }
+
+// Service Worker 只由根语言产出一份（注册绝对路径 /sw.js，一个 SW 管整个源站），
+// 三语与单语言站点都要有；页面在 https 下注册它，语言子目录的页面也一样。
+func TestServiceWorkerAsset(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	all := []i18n.Lang{i18n.ZhCN, i18n.ZhTW, i18n.En}
+	out := build(t, Options{Root: root, AllLangs: all})
+	sw := read(t, filepath.Join(out, "sw.js"))
+	for _, want := range []string{"addEventListener('fetch'", "skipWaiting", "status.json"} {
+		if !strings.Contains(sw, want) {
+			t.Errorf("sw.js 缺 %s", want)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(out, "zh-TW", "sw.js")); err == nil {
+		t.Error("sw.js 不该写进语言子目录：scope 会散")
+	}
+	// 单语言站点根语言就是自己，也要有
+	if _, err := os.Stat(filepath.Join(build(t, Options{Root: root}), "sw.js")); err != nil {
+		t.Error("单语言构建缺 sw.js")
+	}
+	// 页面（含语言子目录的页面）注册的是根路径
+	if body := read(t, filepath.Join(out, "index.html")); !strings.Contains(body, `navigator.serviceWorker.register('/sw.js')`) {
+		t.Error("页面没有注册 /sw.js")
+	}
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
+	en := build(t, Options{Root: root, Lang: i18n.En, AllLangs: all})
+	if body := read(t, filepath.Join(en, "index.html")); !strings.Contains(body, `navigator.serviceWorker.register('/sw.js')`) {
+		t.Error("语言子目录页面没有注册根路径 /sw.js")
+	}
+	if _, err := os.Stat(filepath.Join(en, "sw.js")); err == nil {
+		t.Error("非根语言构建不该产出 sw.js")
+	}
+}
