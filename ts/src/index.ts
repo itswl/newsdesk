@@ -10,21 +10,29 @@
 import { origin, type Env } from './env.ts';
 import { errorPage } from './errors.ts';
 import { allowed, contentType, normalize, ttlFor } from './paths.ts';
-import { selfCheck } from './selfcheck.ts';
+import { tick } from './cron.ts';
+import { route as pushRoute } from './push.ts';
 
 export { evaluate, selfCheck, STALE_HOURS_DEFAULT } from './selfcheck.ts';
 export { allowed, contentType, normalize, ttlFor } from './paths.ts';
 export { errorPage } from './errors.ts';
 export { buildPayload, redact, verdictOf } from './notify.ts';
+export { newReports, snapshot } from './watch.ts';
+export { b64uDecode, b64uEncode, encrypt, validSub, vapidAuth } from './push.ts';
 
 export async function handle(request: Request, env: Env): Promise<Response> {
+  // 推送的订阅/退订走 POST，必须排在下面那道「只收 GET/HEAD」之前。
+  // 它不经过桶的白名单：这几个路径不是站点产出，不该被 normalize/allowed 过一遍。
+  const u = new URL(request.url);
+  if (u.pathname.startsWith('/push/')) return pushRoute(request, env, u);
+
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     const r = errorPage(405, '方法不被允许 · Method not allowed', 'GET / HEAD only.', env);
     r.headers.set('Allow', 'GET, HEAD');
     return r;
   }
 
-  const path = normalize(new URL(request.url).pathname);
+  const path = normalize(u.pathname);
   if (!allowed(path)) {
     return errorPage(404, '页面不存在 · Page not found',
       '这个地址不在本站的产出范围内。 This path is not served by this site.', env);
@@ -64,8 +72,9 @@ export default {
   fetch: handle,
 
   // 由 wrangler.toml 的 [triggers] 驱动。见 selfcheck.ts 里为什么这条必须在
-  // Cloudflare 上跑、而不是在那台 Mac 上。
+  // Cloudflare 上跑、而不是在那台 Mac 上。一次取回 status.json，喂给停更自查
+  // （飞书）与新简报推送（手机）两条线，见 cron.ts。
   scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(selfCheck(env));
+    ctx.waitUntil(tick(env));
   },
 };

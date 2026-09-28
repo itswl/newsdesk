@@ -13,6 +13,21 @@ export interface Env {
   /** 告警地址。是能往群里发消息的凭据，用 `wrangler secret put` 注入，不写进 toml */
   ALERT_WEBHOOK?: string;
   ALERT_PAYLOAD?: string;
+
+  /**
+   * 推送订阅的存放处。没有它整条推送链路静默关闭（页面上的开关也不会出现）。
+   *
+   * ⚠️ 它和 [triggers] 的 cron 频率是一对：新简报提醒靠轮询 status.json 发现，
+   * 所以 cron 要密（10 分钟）；而停更告警的节流状态也存在这里。没有 KV 就别把
+   * cron 调密——那会让同一次停更每 10 分钟往飞书推一条。
+   */
+  PUSH?: KVNamespace;
+  /** VAPID 公钥（未压缩点 base64url）。公开值：页面里也有一份，订阅时要用 */
+  PUSH_VAPID_PUBLIC?: string;
+  /** VAPID 私钥（PKCS8 base64url）。`wrangler secret put`，绝不进 toml */
+  PUSH_VAPID_PRIVATE_KEY?: string;
+  /** VAPID 的 sub 声明，推送服务出问题时它们照这个联系你。mailto: 或 https: */
+  PUSH_SUB?: string;
 }
 
 export function origin(env: Env): string {

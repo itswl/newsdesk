@@ -1,0 +1,78 @@
+// 盯着 status.json，发现某一档出了新报告就推一条。
+//
+// 为什么由 Worker 来盯而不是发布完由那台 Mac 主动敲：订阅存在 KV 里，只有 Worker
+// 够得着；而 Worker 本来就在定时拉 status.json 做停更自查，顺路比对即可，
+// 流水线那边一行都不用改。代价是最多一个轮询间隔的延迟。
+import type { Env } from './env.ts';
+import { push } from './push.ts';
+
+export interface TaskRow { status?: string; finished?: string; label?: string }
+export interface StatusDoc { date?: string; tasks?: Record<string, TaskRow> }
+
+/** 上次已通知到哪一步。按日期加档位记，跨日要重新算 */
+export interface Seen { date?: string; tasks?: Record<string, string> }
+
+const hasReport = (s?: string) => s === 'ok' || s === 'draft';
+
+/**
+ * 算出这一轮新出现的报告。
+ *
+ * ⚠️ 判据是「从没有报告变成有报告」，不是「状态变了」：trending 那一档可能先出草稿
+ * 再出正式版（draft → ok），按状态变化算会为同一天的同一档推两条。
+ *
+ * ⚠️ 跨日必须把基线清空：新的一天各档回到 pending，若拿昨天的 ok 当基线，
+ * 今早的 ai 会被看成「没变化」而漏推。
+ */
+export function newReports(doc: StatusDoc, seen: Seen): { key: string; label: string; finished: string }[] {
+  const base = seen.date === doc.date ? (seen.tasks ?? {}) : {};
+  const out: { key: string; label: string; finished: string }[] = [];
+  for (const [key, row] of Object.entries(doc.tasks ?? {})) {
+    if (hasReport(row.status) && !hasReport(base[key])) {
+      out.push({ key, label: row.label || key, finished: row.finished || '' });
+    }
+  }
+  return out;
+}
+
+export function snapshot(doc: StatusDoc): Seen {
+  const tasks: Record<string, string> = {};
+  for (const [k, v] of Object.entries(doc.tasks ?? {})) tasks[k] = v.status ?? '';
+  return { date: doc.date, tasks };
+}
+
+const SEEN_KEY = 'seen:reports';
+
+/**
+ * 比对并推送。
+ *
+ * 第一次跑（KV 里没有基线）只记录不推送：否则刚上线那一刻会把当天已经完成的
+ * 几档一次性全推出来。
+ */
+export async function watchReports(env: Env, text: string): Promise<void> {
+  if (!env.PUSH) return;
+  let doc: StatusDoc;
+  try { doc = JSON.parse(text) as StatusDoc; } catch { return; } // 坏 JSON 由停更自查去告警
+  if (!doc.date) return;
+
+  const raw = await env.PUSH.get(SEEN_KEY);
+  const first = !raw;
+  let seen: Seen = {};
+  if (raw) { try { seen = JSON.parse(raw) as Seen; } catch { /* 当成没有基线 */ } }
+
+  const fresh = first ? [] : newReports(doc, seen);
+  for (const r of fresh) {
+    await push(env, {
+      title: `${r.label} 已更新`,
+      body: r.finished ? `${doc.date} ${r.finished} 出炉` : String(doc.date),
+      url: `/#${r.key}`,
+      // 同一档的通知互相覆盖，不在锁屏上堆成一列
+      tag: `newsdesk-${r.key}`,
+    });
+  }
+  // 每轮都把基线推进到当前状态：即便这轮没有新报告，也要记下跨日与中间态，
+  // 否则下一轮会拿着过期的基线重算
+  await env.PUSH.put(SEEN_KEY, JSON.stringify(snapshot(doc)));
+  if (fresh.length) {
+    console.log(JSON.stringify({ push: 'newsdesk', date: doc.date, tasks: fresh.map(f => f.key) }));
+  }
+}

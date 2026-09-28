@@ -20,6 +20,27 @@ STALE_ALERT_HOURS = "26"
 # 告警体。留空用 {"title":..,"text":..}；飞书/Lark、钉钉、Slack 形状各不相同。
 ALERT_PAYLOAD = "{\"msg_type\":\"text\",\"content\":{\"text\":\"{{TEXT}}\"}}"
 
+# ── 手机推送（可选）────────────────────────────────────────────────────
+# VAPID 公钥，与 config.conf 的 PUSH_VAPID_PUBLIC 必须**一模一样**：页面用它订阅，
+# Worker 用它署名，对不上的话推送服务会以 401 拒绝，而页面上一切看着都正常。
+PUSH_VAPID_PUBLIC = ""
+# 推送服务出问题时它们照这个联系你。mailto: 或 https:，不能留空。
+PUSH_SUB = "mailto:you@example.com"
+
+# ── 推送订阅的存放处 ───────────────────────────────────────────────────
+# 手机订阅后只交给你一个投递地址，它必须存在公网够得着的地方——那台 Mac 在家里的
+# 网络后面。建好之后把 id 填进来：
+#   npx wrangler kv namespace create PUSH
+#
+# ⚠️ 需要令牌带 **Workers KV Storage:Edit** 权限。只有 Workers Scripts:Edit 的令牌
+# 能部署 Worker 却建不了命名空间，报错是含糊的 "Authentication error [code: 10000]"。
+#
+# ⚠️ 它和下面 [triggers] 的频率是一对：没有它就别把 cron 调密——停更告警的节流
+# 状态也存在这里，没有节流的话机器关一天就是一百多条飞书消息。
+[[kv_namespaces]]
+binding = "PUSH"
+id      = "建好之后填这里"
+
 [[routes]]
 pattern   = "news.example.com/*"
 zone_name = "example.com"
@@ -36,15 +57,22 @@ zone_name = "example.com"
 enabled = true
 head_sampling_rate = 1
 
-# ── 定时自查 ───────────────────────────────────────────────────────────
-# 每 6 小时一次（UTC）。这是整套告警里唯一不在那台机器上的环节——本机的告警
-# 和日终核对都要调度器活着才发得出来，机器关了它们一起沉默。
-# 没有这条，status.json 只是「可以被外部监控」，不是「正在被监控」。
+# ── 定时任务 ───────────────────────────────────────────────────────────
+# 一次取回 status.json，喂给两条互不相干的线：
+#   停更自查 → 飞书。整套告警里唯一不在那台机器上的环节——本机的告警和日终核对
+#              都要调度器活着才发得出来，机器关了它们一起沉默。没有这条，
+#              status.json 只是「可以被外部监控」，不是「正在被监控」。
+#   新简报   → 手机推送。靠比对 status.json 发现某一档出了报告，所以要足够密。
 #
-# 无状态：陈旧时每次都会报，关机三天大约 12 条。告警通道不该在真出事时反而安静。
+# 10 分钟一次 = 144 次/天，远在免费额度内，代价是通知最多晚 10 分钟。
+#
+# ⚠️ 提到这个频率的前提是上面的 KV 绑定存在：停更是一个**持续状态**，不节流的话
+# 机器关一天就是 144 条飞书消息，而告警一旦变噪声就会被忽略，那比迟钝危险得多。
+# 节流状态存在 KV 里（见 selfcheck.ts 的 RENOTIFY_HOURS）。没有 KV 就改回 "0 */6 * * *"。
 [triggers]
-crons = ["0 */6 * * *"]
+crons = ["*/10 * * * *"]
 
-# ⚠️ ALERT_WEBHOOK 是能往群里发消息的凭据，不要写进这个文件。用 secret 注入：
+# ⚠️ 两个凭据都不要写进这个文件，用 secret 注入：
 #   printf '%s' "$WEBHOOK" | npx wrangler secret put ALERT_WEBHOOK
-# 也不要用 `--var ALERT_WEBHOOK=...`：npm 会把整条命令行回显到终端与日志里。
+#   printf '%s' "$VAPID_PRIVATE" | npx wrangler secret put PUSH_VAPID_PRIVATE_KEY
+# 也不要用 `--var KEY=...`：npm 会把整条命令行回显到终端与日志里。
