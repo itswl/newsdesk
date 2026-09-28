@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -193,5 +194,75 @@ func TestOversizedSingleLineSplitsOnRuneBoundary(t *testing.T) {
 		if !utf8.ValidString(c) {
 			t.Errorf("第 %d 块不是合法 UTF-8：切点落在了 rune 中间", i+1)
 		}
+	}
+}
+
+// 翻译是纯转换，请求里必须显式关掉推理：GLM 这类端点默认开着，推理块 token 全算
+// 在输出里（实测一周出/入比中位 5.3 倍，应为 1–1.6），还会把 max_tokens 额度吃掉。
+// 响应里若仍带推理块，也不能混进译文。
+func TestTranslationDisablesThinkingAndDropsThinkingBlocks(t *testing.T) {
+	var gotThinking string
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Thinking struct {
+				Type string `json:"type"`
+			} `json:"thinking"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		gotThinking = body.Thinking.Type
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]string{
+				{"type": "thinking", "thinking": "Let me think about the wording..."},
+				{"type": "text", "text": "# Title\n\nBody.\n"},
+			},
+			"stop_reason": "end_turn",
+			"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer server.Close()
+	c := New(server.URL, "k", "m")
+	c.HTTP = server.Client()
+	out, _, err := c.call(context.Background(), "# 标题\n\n正文。\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotThinking != "disabled" {
+		t.Errorf("请求没有关掉推理：thinking.type=%q", gotThinking)
+	}
+	if strings.Contains(out, "Let me think") {
+		t.Error("推理块混进了译文")
+	}
+	if !strings.Contains(out, "# Title") {
+		t.Error("text 块丢了")
+	}
+}
+
+// 被 max_tokens 截断的块不重试：同样的块、同样的参数再发一遍还是同样的长度，
+// 重试只会把失败拖长三倍（上周每次截断都白打了两次）。
+func TestTruncatedChunkIsNotRetried(t *testing.T) {
+	var calls int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content":     []map[string]string{{"type": "text", "text": "partial"}},
+			"stop_reason": "max_tokens",
+			"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer server.Close()
+	path := filepath.Join(t.TempDir(), "r.md")
+	if err := os.WriteFile(path, []byte("# 短\n\n一句。\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c := New(server.URL, "k", "m")
+	c.HTTP = server.Client()
+	_, err := c.File(context.Background(), path, true)
+	if err == nil || !strings.Contains(err.Error(), "截断") {
+		t.Fatalf("截断必须报错，得到 %v", err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 1 {
+		t.Errorf("截断不该重试：请求了 %d 次，应为 1", n)
 	}
 }
