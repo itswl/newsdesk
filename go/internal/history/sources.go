@@ -42,8 +42,13 @@ func ainews(st *store.Store, date, dd string) (map[string]any, error) {
 		}
 	}
 
-	// 只报近期有失败的源；全都正常时不占版面
-	bad := map[string][]string{}
+	// 源的两种「没东西」必须分开报：抓取失败是我们这边的问题，要在报告里说明；
+	// 抓取成功但窗内没有新条目只是那个源这几天没发东西。以前两者混在一个
+	// sources_with_gaps 里，模型写出「Anthropic 官方源 6/7 天采集失败」——
+	// 实际那周每天都抓成功了，Anthropic 只是只发了一篇。读者被告知一手信源失效，
+	// 而它只是安静。两个键都总是输出（可能为空对象），prompt 按空不空判断。
+	failed := map[string][]string{}
+	quiet := map[string][]string{}
 	for _, d := range daysBefore(st, "ainews", date, Window) {
 		var past aiItems
 		loadJSON(filepath.Join(d[1], "items.json"), &past)
@@ -54,16 +59,20 @@ func ainews(st *store.Store, date, dd string) (map[string]any, error) {
 			name, _ := s[0].(string)
 			status, _ := s[1].(string)
 			kept, _ := s[3].(float64)
-			if status != "OK" || kept == 0 {
-				bad[name] = append(bad[name], d[0])
+			switch {
+			case status != "OK":
+				failed[name] = append(failed[name], d[0])
+			case kept == 0:
+				quiet[name] = append(quiet[name], d[0])
 			}
 		}
 	}
 	return map[string]any{
-		"new_count":         newCount,
-		"repeat_count":      len(rep),
-		"repeat_items":      cut(rep, Cap), // 新条目不列——不在这份名单里的就是新的
-		"sources_with_gaps": bad,
+		"new_count":      newCount,
+		"repeat_count":   len(rep),
+		"repeat_items":   cut(rep, Cap), // 新条目不列——不在这份名单里的就是新的
+		"sources_failed": failed,
+		"sources_quiet":  quiet,
 	}, nil
 }
 
