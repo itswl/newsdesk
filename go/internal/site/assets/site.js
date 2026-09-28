@@ -124,3 +124,75 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
   });
   addEventListener('resize',function(){document.querySelectorAll('.tw').forEach(sync)});
 })();
+
+// 通知开关。文案全部由 Go 那边按站点语言塞进 data-*，这里一个中文字都不写死。
+(function () {
+  var btn = document.getElementById('pushtoggle');
+  if (!btn) return;                                   // 没配公钥就没有这个按钮
+  var note = document.getElementById('pushnote');
+  var d = btn.dataset;
+  var standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  var can = 'serviceWorker' in navigator && 'PushManager' in window &&
+            'Notification' in window && window.isSecureContext;
+
+  if (!can) {
+    // iOS 只给「添加到主屏幕」之后的 webapp 发推送，Safari 里连 PushManager 都没有。
+    // 这时给一句话说清楚，别让人对着一个点了没反应的按钮。
+    if (!standalone && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+      btn.hidden = false; btn.disabled = true; btn.textContent = d.install;
+    }
+    return;
+  }
+  btn.hidden = false;
+
+  var on = false;
+  function say(t) { if (note) note.textContent = t ? ' ' + t : ''; }
+  function paint(sub) { on = !!sub; btn.textContent = on ? d.off : d.on; btn.disabled = false; }
+  function post(path, body) {
+    return fetch(path, { method: 'POST', headers: { 'content-type': 'application/json' },
+                         body: JSON.stringify(body) })
+      .then(function (r) { return r.ok ? r.json() : null; });
+  }
+  function keyBytes(s) {
+    var t = (s + '==='.slice((s.length + 3) % 4)).replace(/-/g, '+').replace(/_/g, '/');
+    var raw = atob(t), out = new Uint8Array(raw.length);
+    for (var i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  navigator.serviceWorker.ready
+    .then(function (reg) { return reg.pushManager.getSubscription(); })
+    .then(paint).catch(function () { paint(null); });
+
+  btn.onclick = function () {
+    // ⚠️ 权限请求必须直接坐在点击里。套进 then 之后 Safari 会认为不是用户手势
+    // 而直接拒绝——表现是点了没反应，控制台也不一定有话说。
+    var ask = (on || Notification.permission === 'granted')
+      ? Promise.resolve('granted') : Notification.requestPermission();
+
+    btn.disabled = true; btn.textContent = d.wait; say('');
+    var wasOn = on;
+    ask.then(function (perm) {
+      if (!wasOn && perm !== 'granted') { paint(null); say(perm === 'denied' ? d.denied : ''); return; }
+      return navigator.serviceWorker.ready.then(function (reg) {
+        return reg.pushManager.getSubscription().then(function (sub) {
+          if (sub) {
+            var ep = sub.endpoint;
+            // 先退订再告诉服务端：反过来的话本地退订失败会留下一个收不到的订阅
+            return sub.unsubscribe()
+              .then(function () { return post('/push/unsubscribe', { endpoint: ep }); })
+              .then(function () { paint(null); say(''); });
+          }
+          return reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(d.key) })
+            .then(function (s) {
+              var j = s.toJSON();
+              return post('/push/subscribe',
+                { endpoint: s.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth });
+            })
+            // 服务端订阅成功会立刻回推一条，welcome 就是那一条的投递结果
+            .then(function (r) { paint(true); say(r && r.welcome === 'ok' ? d.ok : d.fail); });
+        });
+      });
+    }).catch(function () { paint(null); say(d.fail); });
+  };
+})();

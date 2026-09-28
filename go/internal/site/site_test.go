@@ -904,3 +904,72 @@ func TestServiceWorkerAsset(t *testing.T) {
 		t.Error("非根语言构建不该产出 sw.js")
 	}
 }
+
+// 通知开关：配了公钥才出现，且默认 hidden——浏览器支不支持要由 site.js 现场探，
+// 探明之前显示一个按不动的开关比没有开关更让人困惑。文案全部走 i18n。
+func TestPushToggleOnlyWithKey(t *testing.T) {
+	root := fixture(t, "2026-09-17")
+	const key = "BEXAMPLE0123456789abcdefghijklmnopqrstuvwxyz"
+
+	body := read(t, filepath.Join(build(t, Options{Root: root, PushKey: key}), "2026-09-17.html"))
+	for _, want := range []string{
+		`<button type="button" id="pushtoggle" hidden`,
+		`data-key="` + key + `"`,
+		`data-on="开启通知"`, `data-install="`, `data-denied="`,
+		`<span id="pushnote">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("缺 %s", want)
+		}
+	}
+	// 文案不能写死在脚本里：脚本三语共用一份
+	if strings.Contains(js, "开启通知") {
+		t.Error("site.js 里写死了中文文案，英文站就没法翻")
+	}
+	write(t, filepath.Join(root, "reports", "2026-09-17", "ai-news.en.md"), "# Digest\n\nBody.\n")
+	en := read(t, filepath.Join(build(t, Options{Root: root, Lang: i18n.En, PushKey: key}), "2026-09-17.html"))
+	if !strings.Contains(en, `data-on="Enable notifications"`) {
+		t.Error("英文站的开关文案没跟着语言走")
+	}
+
+	// 判据是按钮标记，不是「页面里出现 pushtoggle」——site.js 内联在每页里，
+	// 它自己就按这个 id 找元素，永远命中
+	without := read(t, filepath.Join(build(t, Options{Root: root}), "2026-09-17.html"))
+	if strings.Contains(without, `id="pushtoggle"`) || strings.Contains(without, "data-key=") {
+		t.Error("没配公钥就不该有开关")
+	}
+}
+
+// 推送到达时 SW 必须当场弹一条：iOS 不允许静默推送，收了不弹会被系统收回权限，
+// 而且不报错。点通知要复用已打开的窗口，否则每点一次就多开一个实例。
+func TestServiceWorkerHandlesPush(t *testing.T) {
+	out := build(t, Options{Root: fixture(t, "2026-09-17")})
+	sw := read(t, filepath.Join(out, "sw.js"))
+	for _, want := range []string{
+		"addEventListener('push'", "showNotification",
+		"addEventListener('notificationclick'", "matchAll", "openWindow",
+	} {
+		if !strings.Contains(sw, want) {
+			t.Errorf("sw.js 缺 %s", want)
+		}
+	}
+}
+
+// Worker 拿 status.json 里的栏目名组推送标题。不带的话那边要再维护一份译名表，
+// 而两份名单迟早会漂。
+func TestStatusJSONCarriesTaskLabels(t *testing.T) {
+	out := build(t, Options{Root: fixture(t, "2026-09-17")})
+	var doc struct {
+		Tasks map[string]struct {
+			Status, Label string
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(out, "status.json"))), &doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, tk := range task.All {
+		if got := doc.Tasks[tk.Key].Label; got != i18n.T(i18n.ZhCN, "panel."+tk.Key) {
+			t.Errorf("%s 的栏目名是 %q", tk.Key, got)
+		}
+	}
+}

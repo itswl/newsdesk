@@ -80,3 +80,36 @@ self.addEventListener('fetch', function (e) {
   e.waitUntil(upd);                                     // 超时回退后，后台更新仍要活着写进缓存
   e.respondWith(isPage ? pageResponse(req, upd) : assetResponse(req, upd));
 });
+
+// 推送：应用没开着时由系统唤醒这个 SW。**必须当场弹一条通知**——iOS 不允许
+// 静默推送，收了不弹会被系统按「滥用」收回推送权限，而且不报错。
+self.addEventListener('push', function (e) {
+  var d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (_) { /* 载荷坏了也得弹，见上 */ }
+  e.waitUntil(self.registration.showNotification(d.title || '每日简报', {
+    body: d.body || '',
+    icon: '/icon-192.png',
+    badge: '/icon-192.png',
+    // 同一档的通知互相覆盖，不在锁屏上堆成一列
+    tag: d.tag || 'newsdesk',
+    data: { url: d.url || '/' }
+  }));
+});
+
+// 点通知：已经开着就聚焦那个窗口并跳到对应栏目，没开着才新开一个。
+// 不这么做的话每点一次通知就多开一个实例。
+self.addEventListener('notificationclick', function (e) {
+  e.notification.close();
+  var url = (e.notification.data && e.notification.data.url) || '/';
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(function (ws) {
+    for (var i = 0; i < ws.length; i++) {
+      if (ws[i].url.indexOf(self.location.origin) === 0) {
+        return ws[i].focus().then(function (c) {
+          // navigate 在部分实现里会拒绝；跳不过去也已经聚焦了，不该因此报错
+          return c && c.navigate ? c.navigate(url).catch(function () {}) : c;
+        });
+      }
+    }
+    return self.clients.openWindow(url);
+  }));
+});

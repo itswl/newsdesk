@@ -114,3 +114,29 @@ func TestGithubTokenNoneMeansUnauthenticated(t *testing.T) {
 		t.Fatalf("显式填 none 应当强制不认证，得到 %q", got)
 	}
 }
+
+// VAPID 的两把钥匙在同一个配置文件里，靠**名字**被自检区分开：
+//
+//	PUSH_VAPID_PRIVATE_KEY  含 KEY → 收进自检。它泄进产出就等于别人能冒名推送
+//	PUSH_VAPID_PUBLIC       不含   → 不收。它按设计印在每一个页面上，
+//	                                 一旦被当成凭据，**每次发布都会因为
+//	                                 「产出里有凭据」而中止**，而且报错指向的是
+//	                                 站点文件，很难一眼看出根因在命名
+func TestSecretValuesTreatsVAPIDKeysByName(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "c.conf")
+	os.WriteFile(p, []byte(strings.Join([]string{
+		"PUSH_VAPID_PUBLIC=BEXAMPLE0123456789abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ012",
+		"PUSH_VAPID_PRIVATE_KEY=MIGEXAMPLE0123456789abcdefghijklmnopqrstuvwxyz0123456789",
+	}, "\n")), 0o644)
+	c, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := secretValues(c)
+	if _, ok := got["PUSH_VAPID_PRIVATE_KEY"]; !ok {
+		t.Error("私钥必须纳入发布前自检")
+	}
+	if _, ok := got["PUSH_VAPID_PUBLIC"]; ok {
+		t.Error("公钥印在每个页面上，被当成凭据会让每次发布都中止")
+	}
+}

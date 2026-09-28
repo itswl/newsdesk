@@ -133,6 +133,9 @@ type statusDoc struct {
 type statusRow struct {
 	Status   string `json:"status"`
 	Finished string `json:"finished,omitempty"`
+	// Label 栏目名。Worker 拿它组推送标题——不带的话那边要再维护一份译名表，
+	// 而两份名单迟早会漂（归档页那次 chip 就是这么坏的）。
+	Label string `json:"label,omitempty"`
 }
 
 // writeStatus 给外部监控用的机器可读状态。
@@ -165,7 +168,7 @@ func (b *Builder) writeStatus() error {
 	// 有心跳但已经陈旧才是故障：进程还在写状态却停止工作了。
 	allGood := doc.StaleHours == nil || *doc.StaleHours < 1
 	for k, v := range b.todayState() {
-		doc.Tasks[k] = statusRow{Status: v.Status, Finished: v.At}
+		doc.Tasks[k] = statusRow{Status: v.Status, Finished: v.At, Label: b.T("panel." + k)}
 		if v.Status != "ok" && v.Status != "draft" && v.Status != "pending" {
 			allGood = false
 		}

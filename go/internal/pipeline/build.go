@@ -51,13 +51,14 @@ func Site(root string, cfg *config.Config, out io.Writer) (localDir, publicDir s
 	}
 	siteURL := cfg.Get("SITE_URL", "")
 	contact := cfg.Get("CONTACT", "")
+	pushKey := cfg.Get("PUSH_VAPID_PUBLIC", "")
 	localDir = filepath.Join(root, "site")
 
 	build := func(dir string, days int) error {
 		for _, l := range eff {
 			o := site.Options{
 				Root: root, Out: langs.SubDir(dir, l, eff), Days: days,
-				Lang: l, AllLangs: eff, SiteURL: siteURL, Contact: contact, Log: out,
+				Lang: l, AllLangs: eff, SiteURL: siteURL, Contact: contact, PushKey: pushKey, Log: out,
 			}
 			if err := site.Build(o); err != nil {
 				return fmt.Errorf("生成 %s 站点: %w", l, err)
