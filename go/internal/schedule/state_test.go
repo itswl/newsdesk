@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestLoadMissingIsNotAnError(t *testing.T) {
@@ -61,7 +62,7 @@ func TestSaveIsAtomic(t *testing.T) {
 func TestHealthCarriesEpoch(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "health.json")
 	s := &State{Tasks: map[string]TaskState{"ai": {Date: "2026-09-17", Status: "ok"}}}
-	if err := WriteHealth(p, s, []string{"06:30 ai"}); err != nil {
+	if err := WriteHealth(p, s, []string{"06:30 ai"}, nil); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(p)
@@ -81,4 +82,48 @@ func contains(s, sub string) bool {
 		}
 		return false
 	})()
+}
+
+// 任务跑着的时候 health.json 要标明是哪一档、几点开始的；空闲时这两项不出现。
+func TestHealthCarriesRunningTask(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "health.json")
+	s := &State{Tasks: map[string]TaskState{}}
+	since := time.Date(2026, 9, 28, 16, 40, 0, 0, time.Local)
+	if err := WriteHealth(p, s, []string{"16:40 trending"}, &Running{Key: "trending", Since: since}); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(p)
+	for _, k := range []string{`"running": "trending"`, `"running_since": "` + since.Format(time.RFC3339)} {
+		if !contains(string(raw), k) {
+			t.Errorf("health.json 缺 %s：\n%s", k, raw)
+		}
+	}
+	if err := WriteHealth(p, s, []string{"16:40 trending"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ = os.ReadFile(p)
+	if contains(string(raw), `"running"`) {
+		t.Errorf("空闲时不该留着 running：\n%s", raw)
+	}
+}
+
+// 主循环阻塞在任务里时，旁路心跳要一直刷新，直到 stop 返回。
+func TestHeartbeatWhileKeepsWritingUntilStopped(t *testing.T) {
+	l := &Loop{healthPath: filepath.Join(t.TempDir(), "health.json"), sched: []string{"06:30 ai"}}
+	s := &State{Tasks: map[string]TaskState{}}
+	stop := l.heartbeatWhile(s, "ai", 5*time.Millisecond)
+	first, err := os.Stat(l.healthPath)
+	if err != nil {
+		t.Fatal("启动时就该写一次心跳:", err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	stop()
+	after, _ := os.Stat(l.healthPath)
+	if !after.ModTime().After(first.ModTime()) {
+		t.Error("任务期间心跳没有持续刷新")
+	}
+	raw, _ := os.ReadFile(l.healthPath)
+	if !contains(string(raw), `"running": "ai"`) {
+		t.Errorf("心跳里没标正在跑的档：\n%s", raw)
+	}
 }

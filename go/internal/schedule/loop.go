@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -25,7 +26,8 @@ type Loop struct {
 	notifier   *notify.Notifier
 	statePath  string
 	healthPath string
-	auditAt    string // 日终核对时刻 HH:MM
+	auditAt    string   // 日终核对时刻 HH:MM
+	sched      []string // 时间表文案，写进 health.json
 }
 
 func NewLoop(root, home string, cfg *config.Config) *Loop {
@@ -71,6 +73,7 @@ func (l *Loop) Run(ctx context.Context) error {
 	for _, t := range task.All {
 		sched = append(sched, t.At+" "+t.Key)
 	}
+	l.sched = sched
 	l.logf("调度器启动，pid %d", os.Getpid())
 	l.logf("时间表：%s", strings.Join(sched, " | "))
 	l.logf("%s", engine.PlanLine(l.Cfg))
@@ -83,7 +86,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.logf("!! %v", err)
 		l.alert("newsdesk 调度状态异常", err.Error()+"\n已按空状态继续，今天的任务可能重跑。")
 	}
-	_ = WriteHealth(l.healthPath, st, sched)
+	_ = WriteHealth(l.healthPath, st, sched, nil)
 
 	tk := time.NewTicker(l.Tick)
 	defer tk.Stop()
@@ -119,7 +122,7 @@ func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
 		// 一遍，白烧一次模型调用还覆盖掉好的产出。
 		// 日终核对本来就以产出为准，判定这边不看就是两套标准。
 		if l.reconcile(t, now, st) {
-			_ = WriteHealth(l.healthPath, st, sched)
+			_ = WriteHealth(l.healthPath, st, sched, nil)
 			continue
 		}
 		d := Decide(t, now, st.Tasks[t.Key])
@@ -138,10 +141,10 @@ func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
 			l.logf("[%s] %s，开始", t.Key, d.Reason)
 			l.runOne(ctx, t, d, st, now)
 		}
-		_ = WriteHealth(l.healthPath, st, sched)
+		_ = WriteHealth(l.healthPath, st, sched, nil)
 	}
 	l.audit(st, now)
-	return WriteHealth(l.healthPath, st, sched)
+	return WriteHealth(l.healthPath, st, sched, nil)
 }
 
 // reconcile 用产出校正调度状态，返回 true 表示这一档已经有今天的报告、不必再跑。
@@ -185,10 +188,15 @@ func reconcileWhy(prev TaskState, day string) string {
 
 func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, now time.Time) {
 	day := now.Format("2006-01-02")
+	// 任务跑着的时候主循环阻塞在下面这一行，心跳没人写。status 要求「进程活着且
+	// 心跳新于 5 分钟」，一档超过 5 分钟就被报成「已停止」——每天四档各误报一次，
+	// 恰好落在最可能有人去看的那段时间。旁路心跳顺带写明正在跑哪一档、何时开始。
+	stop := l.heartbeatWhile(st, t.Key, time.Minute)
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Root: l.Root, Home: l.Home, Cfg: l.Cfg, Task: t, Date: day,
 		Log: prefixWriter{prefix: "[" + t.Key + "] "},
 	})
+	stop() // 必须在改 st 之前停：旁路 goroutine 在读 st.Tasks
 	end := time.Now()
 
 	// 主动停止不是失败。收到退出信号时模型子进程会被一起杀掉，pipeline 因此
@@ -295,4 +303,28 @@ func (w prefixWriter) Write(b []byte) (int, error) {
 		}
 	}
 	return len(b), nil
+}
+
+// heartbeatWhile 任务执行期间每隔 every 写一次心跳，标明正在跑的档。
+// 返回的 stop 会等 goroutine 退出后才返回——调用方接着要改 st，而 goroutine 在读它。
+func (l *Loop) heartbeatWhile(st *State, key string, every time.Duration) (stop func()) {
+	run := &Running{Key: key, Since: time.Now()}
+	_ = WriteHealth(l.healthPath, st, l.sched, run)
+	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		tk := time.NewTicker(every)
+		defer tk.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tk.C:
+				_ = WriteHealth(l.healthPath, st, l.sched, run)
+			}
+		}
+	}()
+	return func() { close(done); wg.Wait() }
 }
