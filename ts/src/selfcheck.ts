@@ -63,35 +63,42 @@ export function evaluate(text: string, nowMs: number, thresholdHours: number): V
 }
 
 /**
- * 定时自查。
+ * 同一次停更多久才再告警一次。
+ *
+ * cron 为了及时发现新简报提到了 10 分钟一次，但停更是**一个持续状态**：不节流的话
+ * 机器关一天就是 144 条飞书消息，而告警一旦变噪声就会被忽略，那比迟钝危险得多。
+ * 6 小时沿用提频之前的节奏。
+ */
+export const RENOTIFY_HOURS = 6;
+const ALERTED_KEY = 'alerted:stale';
+
+/**
+ * 停更自查。
  *
  * 这是整套告警里唯一**不在那台 Mac 上**的环节，也是唯一能发现「机器关了三天」
  * 的环节：本机的告警和日终核对都要调度器活着才发得出来，机器关了它们一起沉默。
  * status.json 让状态**可以**被外部监控，但可以被监控 ≠ 正在被监控。
  * Worker 本来就站在站点前面，天然在机器之外，由它来轮询这条线才闭合。
+ *
+ * ⚠️ 这条走飞书，不走推送：停更意味着机器可能已经不在了，要去人一定会看的地方。
+ * 手机推送只用来报「新简报出了」。
  */
-export async function selfCheck(env: Env): Promise<void> {
+export async function staleWatch(env: Env, got: { ok: boolean; status: number; text: string; error?: string },
+                                 nowMs = Date.now()): Promise<void> {
   if (!env.ALERT_WEBHOOK) return; // 没配就安静跳过
 
   const threshold = Number(env.STALE_ALERT_HOURS || STALE_HOURS_DEFAULT);
   let verdict: Verdict;
-  try {
-    // cacheTtl: 0 —— 必须绕开自己的边缘缓存，否则读到的是刚才那份，
-    // 「陈旧」这件事正好被自己藏住了
-    const res = await fetch(origin(env) + '/status.json', { cf: { cacheTtl: 0 } });
-    verdict = res.ok
-      ? evaluate(await res.text(), Date.now(), threshold)
-      : {
-          bad: true,
-          title: `❌ newsdesk 取不到状态文件 (HTTP ${res.status})`,
-          body: '对象存储没有返回 status.json。桶被改动、被删、或权限变了。',
-        };
-  } catch (e) {
+  if (got.error !== undefined) {
+    verdict = { bad: true, title: '❌ newsdesk 自查请求失败', body: got.error };
+  } else if (!got.ok) {
     verdict = {
       bad: true,
-      title: '❌ newsdesk 自查请求失败',
-      body: String(e instanceof Error ? e.message : e),
+      title: `❌ newsdesk 取不到状态文件 (HTTP ${got.status})`,
+      body: '对象存储没有返回 status.json。桶被改动、被删、或权限变了。',
     };
+  } else {
+    verdict = evaluate(got.text, nowMs, threshold);
   }
 
   // 成功也记一行：开了 observability 之后，这是唯一能在后台确认「cron 确实在跑」
@@ -101,5 +108,20 @@ export async function selfCheck(env: Env): Promise<void> {
     age_hours: verdict.age !== undefined ? Number(verdict.age.toFixed(2)) : null,
   }));
 
-  if (verdict.bad) await notify(env, verdict.title!, verdict.body!);
+  if (!verdict.bad) {
+    await env.PUSH?.delete(ALERTED_KEY); // 恢复了就清掉节流，下次出事立刻响
+    return;
+  }
+  if (env.PUSH) {
+    const last = Number((await env.PUSH.get(ALERTED_KEY)) || 0);
+    if (last && nowMs - last < RENOTIFY_HOURS * 3.6e6) return;
+    await env.PUSH.put(ALERTED_KEY, String(nowMs));
+  }
+  await notify(env, verdict.title!, verdict.body!);
+}
+
+/** 自己取一次再自查。给不经 cron 的调用方用（cron 走 cron.ts，只取一次喂两条线）。 */
+export async function selfCheck(env: Env): Promise<void> {
+  const { fetchStatus } = await import('./cron.ts');
+  await staleWatch(env, await fetchStatus(env));
 }
