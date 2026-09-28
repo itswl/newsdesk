@@ -336,3 +336,12 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
 /* 顶部 tabbar 是 sticky 的（约 50px 高）：键盘 Tab 进正文、或将来做标题锚点时，
    浏览器把目标滚进视口会正好压在导航条下面。给可能被滚到的元素留出余量。 */
 a,button,select,summary,[tabindex],h1,h2,h3,h4,h5,h6{scroll-margin-top:64px}
+
+/* 通知开关：一次性动作，放页脚。默认 hidden，由 site.js 探明浏览器真的支持
+   之后才显示——不支持时显示一个点了没反应的按钮比没有按钮更糟。 */
+.push{margin:0 0 14px}
+.push button{font:inherit;font-size:12.5px;padding:6px 12px;border-radius:7px;cursor:pointer;
+  border:1px solid var(--bd2);background:var(--bg3);color:var(--fg2)}
+.push button:hover:not(:disabled){background:var(--bg4);color:var(--fgh2)}
+.push button:disabled{opacity:.55;cursor:default}
+.push span{font-size:12.5px;color:var(--fg3)}

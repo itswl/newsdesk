@@ -72,6 +72,16 @@ var s = map[string][2]string{
 	"nav.tabs_label":  {"栏目", "Sections"},
 	"nav.skip":        {"跳到正文", "Skip to content"},
 
+	// 通知开关。文案在这里、不在 site.js 里：脚本是三语共用的一份，
+	// 在那边写死中文的话英文站就没法翻。
+	"push.on":      {"开启通知", "Enable notifications"},
+	"push.off":     {"关闭通知", "Turn notifications off"},
+	"push.wait":    {"处理中…", "Working…"},
+	"push.ok":      {"已开启，新简报出炉时会提醒你。", "On. You will be notified when a new briefing lands."},
+	"push.fail":    {"没能开启，稍后再试。", "Could not enable it. Try again later."},
+	"push.denied":  {"通知被拒绝了，要到系统设置里为本应用打开。", "Notifications are blocked. Enable them for this app in system settings."},
+	"push.install": {"先「添加到主屏幕」，装好后回到这里开启", "Add to Home Screen first, then enable notifications here"},
+
 	"tab.absent": {"当天没有这份报告——任务没跑，或者跑了但失败了",
 		"No such report for this day — the task did not run, or it failed."},
 	"tab.draft_tip": {"这是草稿版本：当天的正式版还没生成，正式版出来后会取代它",

@@ -27,6 +27,11 @@ type Options struct {
 	AllLangs []i18n.Lang // 语言切换器里列哪些；少于 2 个则不显示切换器
 	SiteURL  string      // 对外地址，留空则不生成 feed
 	Contact  string
+	// PushKey VAPID 公钥。留空则页面上不出现通知开关。
+	// 是公开值（订阅时浏览器要用），但名字里**不能带 KEY**——发布前的凭据自检
+	// 按名字收集配置值，带 KEY 会被当成密钥，于是每次发布都因为「产出里有凭据」
+	// 而中止。私钥叫 PUSH_VAPID_PRIVATE_KEY，正是要被它收走。
+	PushKey string
 	// Out 进度输出去向。nil = os.Stdout。
 	// 调度器无人值守跑时这些行要落进任务日志，不然出事后只剩一句「失败了」。
 	Log io.Writer

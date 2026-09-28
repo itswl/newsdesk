@@ -46,6 +46,24 @@ func (b *Builder) genNote() string {
 	return fmt.Sprintf(`<p class="gen">%s</p>`, esc(b.genTimeText()))
 }
 
+// pushToggle 页脚上的通知开关。
+//
+// 没配 PUSH_VAPID_PUBLIC 就整个不渲染——推送链路没搭起来时，一个按不动的开关
+// 比没有开关更让人困惑。默认 hidden：浏览器到底支不支持要由 site.js 现场探，
+// 探明之前不显示。文案全部走 i18n 塞进 data-*，脚本里不写死任何语言。
+func (b *Builder) pushToggle() string {
+	if b.o.PushKey == "" {
+		return ""
+	}
+	return fmt.Sprintf(`<p class="push"><button type="button" id="pushtoggle" hidden`+
+		` data-key="%s" data-on="%s" data-off="%s" data-wait="%s" data-ok="%s"`+
+		` data-fail="%s" data-denied="%s" data-install="%s">%s</button>`+
+		`<span id="pushnote"></span></p>`,
+		esc(b.o.PushKey), esc(b.T("push.on")), esc(b.T("push.off")), esc(b.T("push.wait")),
+		esc(b.T("push.ok")), esc(b.T("push.fail")), esc(b.T("push.denied")),
+		esc(b.T("push.install")), esc(b.T("push.on")))
+}
+
 func (b *Builder) disclaimer() string {
 	s := b.T("dis.body")
 	if b.o.Contact != "" {
@@ -317,10 +335,10 @@ func (b *Builder) writeDay(day string) error {
 		`%s<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s%s</div></header>`+
 		`<nav class="tabbar"><div class="tabs" role="tablist" aria-label="%s">%s</div></nav>`+
 		`<main id="main" tabindex="-1">%s`+
-		`<footer class="dis">%s%s</footer></main><script>%s</script></body></html>`,
+		`<footer class="dis">%s%s%s</footer></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(title), b.headMeta(title, page), b.headIcons(), b.headLinks(page), headJS, css,
 		b.skipLink(), esc(b.T("site.name")), day, latest, b.nav(day), b.tools(page),
-		esc(b.T("nav.tabs_label")), tabs.String(), panes.String(), note, b.disclaimer(), js)
+		esc(b.T("nav.tabs_label")), tabs.String(), panes.String(), note, b.pushToggle(), b.disclaimer(), js)
 
 	return os.WriteFile(filepath.Join(b.o.Out, page), []byte(doc), 0o644)
 }
