@@ -11,6 +11,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -67,8 +68,13 @@ func New(base, token, model string) *Client {
 
 type Usage struct{ Input, Output int }
 
+// errTruncated 译文被 max_tokens 截断。单独成一个哨兵：这种失败**不重试**——
+// 同样的块、同样的参数再发一遍，还是同样的长度。
+var errTruncated = errors.New("译文被截断")
+
 type msgResp struct {
 	Content []struct {
+		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content"`
 	StopReason string `json:"stop_reason"`
@@ -89,6 +95,12 @@ func (c *Client) call(ctx context.Context, text string) (string, Usage, error) {
 	}
 	body, _ := json.Marshal(map[string]any{
 		"model": c.Model, "max_tokens": maxTokens, "system": system,
+		// 显式关掉推理。翻译是纯转换，不需要想；而 GLM 这类端点默认开着推理，
+		// 推理块被下面的解析丢掉，token 却全算在输出里——实测一周出/入比中位
+		// 5.3 倍（忠实翻译应为 1–1.6），一句话探针里 88% 的输出是推理。更糟的是
+		// 推理会把 max_tokens 的额度吃掉：切块修好之后仍出现的截断全是它。
+		// 这是 Anthropic 接口的标准字段，换回官方端点也认。
+		"thinking": map[string]string{"type": "disabled"},
 		"messages": []map[string]string{{"role": "user", "content": text}},
 	})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, root+"/v1/messages", bytes.NewReader(body))
@@ -115,11 +127,15 @@ func (c *Client) call(ctx context.Context, text string) (string, Usage, error) {
 	}
 	var sb strings.Builder
 	for _, c := range r.Content {
-		sb.WriteString(c.Text)
+		// 只要 text 块。推理块（type=thinking）即便带了 text 字段也不能混进译文；
+		// 不带 type 的按 text 处理，兼容只回文本的网关。
+		if c.Type == "" || c.Type == "text" {
+			sb.WriteString(c.Text)
+		}
 	}
 	// 截断是静默失败里最难发现的一种：文件看着正常，只是后半截没了
 	if r.StopReason == "max_tokens" {
-		return "", Usage{}, fmt.Errorf("输出被 max_tokens=%d 截断，译文不完整", maxTokens)
+		return "", Usage{}, fmt.Errorf("输出被 max_tokens=%d 截断，译文不完整: %w", maxTokens, errTruncated)
 	}
 	if strings.TrimSpace(sb.String()) == "" {
 		return "", Usage{}, fmt.Errorf("返回空内容: %s", snip(raw))
@@ -310,6 +326,9 @@ func (c *Client) File(ctx context.Context, src string, force bool) (FileResult, 
 					return
 				}
 				last = err
+				if errors.Is(err, errTruncated) {
+					break // 同样的块再发一遍还是被截断，重试只会把失败拖长三倍
+				}
 				if a < retries { // 空返回、瞬时 5xx 多半重试一次就好
 					select {
 					case <-time.After(time.Duration(a*3) * time.Second):
