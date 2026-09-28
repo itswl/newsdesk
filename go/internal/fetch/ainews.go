@@ -41,7 +41,6 @@ var Feeds = []Feed{
 	{"Simon Willison", "https://simonwillison.net/atom/everything/", "二手·独立评论", 0, 0},
 	{"Hacker News", "https://news.ycombinator.com/rss", "社区·首页", 12, 0},
 	{"Hugging Face", "https://huggingface.co/blog/feed.xml", "一手·厂商公告", 0, 0},
-	{"Qwen", "https://qwenlm.github.io/blog/index.xml", "一手·厂商公告", 0, 0},
 	{"MIT Tech Review", "https://www.technologyreview.com/topic/artificial-intelligence/feed", "二手·科技媒体", 0, 0},
 	{"Import AI", "https://importai.substack.com/feed", "二手·独立评论", 0, 0},
 	{"r/LocalLLaMA", "https://www.reddit.com/r/LocalLLaMA/.rss", "社区·开源模型", 10, 2 * time.Second},
@@ -128,6 +127,17 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 		doc.Items = append(doc.Items, kept...)
 		doc.Sources = append(doc.Sources, aiStat{"Anthropic", "OK", len(items), len(kept)})
 		fmt.Printf("  %-18s 总 %-4d 窗内 %d\n", "Anthropic", len(items), len(kept))
+	}
+
+	// Qwen 没有可用的 RSS，走 Hugging Face 的组织接口（见 qwenModels）
+	if items, err := qwenModels(ctx, c); err != nil {
+		doc.Sources = append(doc.Sources, aiStat{"Qwen", "FAIL", 0, 0})
+		fmt.Printf("  %-18s 抓取失败: %v\n", "Qwen", err)
+	} else {
+		kept := keepFresh(items, cutoff, 0)
+		doc.Items = append(doc.Items, kept...)
+		doc.Sources = append(doc.Sources, aiStat{"Qwen", "OK", len(items), len(kept)})
+		fmt.Printf("  %-18s 总 %-4d 窗内 %d\n", "Qwen", len(items), len(kept))
 	}
 
 	for _, f := range Feeds {
@@ -243,6 +253,49 @@ func anthropicNews(ctx context.Context, c *Client) ([]Item, error) {
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("解析出 0 条，页面结构可能已变")
+	}
+	return out, nil
+}
+
+// qwenModels Qwen 的公告源。
+//
+// 官方博客 qwen.ai 是纯客户端渲染：普通 HTTP 只拿得到 SPA 外壳，六个常见路径都
+// 没有 RSS。旧的 qwenlm.github.io feed 停在 2025-09——它在配置里躺了一年，天天
+// 「OK 窗内 0」没人发现（这也是 sources_quiet 要跟 sources_failed 分开的原因）。
+// 改用 Hugging Face 的组织接口：JSON、普通 HTTP，而对 Qwen 来说模型上 HF 就是
+// 公告本身，博客反而滞后。
+//
+// 按 createdAt 排，不用 lastModified：后者 README 改一个字就刷新，2025 年的旧模型
+// 会天天冒出来。
+func qwenModels(ctx context.Context, c *Client) ([]Item, error) {
+	body, err := c.Get(ctx, "https://huggingface.co/api/models?author=Qwen&sort=createdAt&direction=-1&limit=12",
+		map[string]string{"accept": "application/json"})
+	if err != nil {
+		return nil, err
+	}
+	return parseHFModels(body)
+}
+
+func parseHFModels(body []byte) ([]Item, error) {
+	var raw []struct {
+		ID        string `json:"id"`
+		CreatedAt string `json:"createdAt"`
+		Private   bool   `json:"private"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("解析 HF 模型列表: %w", err)
+	}
+	var out []Item
+	for _, m := range raw {
+		if m.Private || m.ID == "" {
+			continue
+		}
+		out = append(out, Item{Source: "Qwen", Tier: "一手·厂商公告", Title: m.ID,
+			Link: "https://huggingface.co/" + m.ID, Date: m.CreatedAt,
+			Summary: "Hugging Face 上新建的模型仓库（Qwen 的发布以模型上架为准，博客滞后）"})
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("解析出 0 个模型，接口形状可能已变")
 	}
 	return out, nil
 }
