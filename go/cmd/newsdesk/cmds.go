@@ -229,6 +229,22 @@ func cmdStatus(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	// 先读心跳：任务跑着的时候要把「正在跑」标在那一档上，而不是报成「还没跑」。
+	var h struct {
+		HeartbeatEpoch int64  `json:"heartbeat_epoch"`
+		PID            int    `json:"pid"`
+		Running        string `json:"running"`
+		RunningSince   string `json:"running_since"`
+	}
+	haveHealth := false
+	if raw, err := os.ReadFile(st.State("health.json")); err == nil && json.Unmarshal(raw, &h) == nil && h.HeartbeatEpoch > 0 {
+		haveHealth = true
+	}
+	age := time.Since(time.Unix(h.HeartbeatEpoch, 0))
+	// 光看心跳新旧不够：刚停掉的调度器心跳还很新，会被报成运行中。
+	// 心跳文件是它留下的痕迹，不是它还活着的证明——要真的探一下进程。
+	alive := haveHealth && h.PID > 0 && syscall.Kill(h.PID, 0) == nil && age < 5*time.Minute
+
 	today := store.Today()
 	fmt.Printf("%s   %s\n", today, engine.PlanLine(cfg))
 	for _, t := range task.All {
@@ -246,6 +262,13 @@ func cmdStatus(ctx context.Context, args []string) error {
 				note = ts.Status
 			}
 		}
+		running := alive && h.Running == t.Key
+		if running {
+			mark, note = "▶", "正在跑"
+			if since, err := time.Parse(time.RFC3339, h.RunningSince); err == nil {
+				note = fmt.Sprintf("正在跑（%s 开始，已 %s）", since.Format("15:04"), time.Since(since).Round(time.Minute))
+			}
+		}
 		// 报告在就是跑过了。手动跑不写调度状态，被中断过的档还留着失败记录——
 		// 只看 schedule.json 会把已有产出的那一档报成「还没跑」或「失败」。
 		// 判据跟调度器的 reconcile 一致：产出时刻不早于预定时刻才算这一档的。
@@ -255,6 +278,8 @@ func cmdStatus(ctx context.Context, args []string) error {
 				fresh = true
 			}
 			switch {
+			case running:
+				// 跑到一半的档可能已经写出报告（翻译、发布还没完），别报成已完成
 			case fresh && ts.Status != "ok":
 				mark, note = "✓", "已完成（产出在，调度状态未同步）"
 			case mark == "·":
@@ -264,23 +289,13 @@ func cmdStatus(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("  %s %-9s %s  %s\n", mark, t.Key, t.At, note)
 	}
-	if raw, err := os.ReadFile(st.State("health.json")); err == nil {
-		var h struct {
-			HeartbeatEpoch int64 `json:"heartbeat_epoch"`
-			PID            int   `json:"pid"`
-		}
-		if json.Unmarshal(raw, &h) == nil && h.HeartbeatEpoch > 0 {
-			age := time.Since(time.Unix(h.HeartbeatEpoch, 0))
-			// 光看心跳新旧不够：刚停掉的调度器心跳还很新，会被报成运行中。
-			// 心跳文件是它留下的痕迹，不是它还活着的证明——要真的探一下进程。
-			live := "已停止"
-			if h.PID > 0 && syscall.Kill(h.PID, 0) == nil && age < 5*time.Minute {
-				live = "运行中"
-			}
-			fmt.Printf("调度器：%s（pid %d，心跳 %s 前）\n", live, h.PID, age.Round(time.Second))
-		}
-	} else {
+	switch {
+	case !haveHealth:
 		fmt.Println("调度器：从未运行过")
+	case alive:
+		fmt.Printf("调度器：运行中（pid %d，心跳 %s 前）\n", h.PID, age.Round(time.Second))
+	default:
+		fmt.Printf("调度器：已停止（pid %d，心跳 %s 前）\n", h.PID, age.Round(time.Second))
 	}
 	return nil
 }

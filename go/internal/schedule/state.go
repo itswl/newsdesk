@@ -88,6 +88,16 @@ type Health struct {
 	PID            int               `json:"pid"`
 	Schedule       []string          `json:"schedule"`
 	Tasks          map[string]string `json:"tasks"`
+	// 正在跑的档与它的开始时刻。一档一跑就是十几二十分钟，这期间主循环阻塞在
+	// pipeline 里；没有这两项，status 分不清「还没跑」和「跑到一半」。
+	Running      string `json:"running,omitempty"`
+	RunningSince string `json:"running_since,omitempty"`
+}
+
+// Running 正在执行的任务。nil 表示空闲。
+type Running struct {
+	Key   string
+	Since time.Time
 }
 
 // WriteHealth 把调度器存活写进 state/health.json。
@@ -97,11 +107,14 @@ type Health struct {
 // 变陈旧，才是唯一能覆盖「整机不在」的办法。
 //
 // ⚠️ 时间戳带时区并另给 epoch：消费者是跑在 UTC 里的 Worker。
-func WriteHealth(path string, s *State, sched []string) error {
+func WriteHealth(path string, s *State, sched []string, run *Running) error {
 	now := time.Now()
 	h := Health{
 		Heartbeat: now.Format(time.RFC3339), HeartbeatEpoch: now.Unix(),
 		PID: os.Getpid(), Schedule: sched, Tasks: map[string]string{},
+	}
+	if run != nil {
+		h.Running, h.RunningSince = run.Key, run.Since.Format(time.RFC3339)
 	}
 	for k, v := range s.Tasks {
 		h.Tasks[k] = v.Date + " " + v.Status
