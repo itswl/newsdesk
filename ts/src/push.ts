@@ -143,8 +143,13 @@ export async function listSubs(env: Env): Promise<{ key: string; sub: Sub }[]> {
 }
 
 export type SendResult = 'ok' | 'gone' | 'fail';
+/**
+ * 一次投递的结果。detail 是推送服务给的原因：Apple 把它写在正文里
+ * （如 {"reason":"BadJwtToken"}），只留一个状态码的话失败了也说不清为什么。
+ */
+export interface SendOutcome { result: SendResult; status?: number; detail?: string }
 
-export async function sendTo(env: Env, key: string, sub: Sub, msg: Msg): Promise<SendResult> {
+export async function sendTo(env: Env, key: string, sub: Sub, msg: Msg): Promise<SendOutcome> {
   const pair = asPair(
     await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']));
   const body = await encrypt(enc.encode(JSON.stringify(msg)), b64uDecode(sub.p256dh),
@@ -164,22 +169,71 @@ export async function sendTo(env: Env, key: string, sub: Sub, msg: Msg): Promise
   // 404/410 = 这个订阅已经没了（应用被删、系统吊销）。不清掉的话它会永远失败
   if (res.status === 404 || res.status === 410) {
     await env.PUSH?.delete(key);
-    return 'gone';
+    return { result: 'gone', status: res.status };
   }
-  return res.ok ? 'ok' : 'fail';
+  if (res.ok) return { result: 'ok', status: res.status };
+  return { result: 'fail', status: res.status, detail: (await res.text().catch(() => '')).slice(0, 200) };
 }
 
-export interface FanOut { sent: number; gone: number; failed: number }
+/**
+ * 一次扇出的汇总。subs 单列出来：「为什么没收到」最常见的答案是**根本没有订阅**，
+ * 而 sent=0 分不清是没人订还是全失败了。
+ */
+export interface FanOut { subs: number; sent: number; gone: number; failed: number; errors: string[] }
 
 export async function push(env: Env, msg: Msg): Promise<FanOut> {
-  const out: FanOut = { sent: 0, gone: 0, failed: 0 };
-  if (!env.PUSH || !env.PUSH_VAPID_PRIVATE_KEY || !env.PUSH_VAPID_PUBLIC) return out;
-  for (const { key, sub } of await listSubs(env)) {
-    let r: SendResult;
-    try { r = await sendTo(env, key, sub, msg); } catch { r = 'fail'; }
-    if (r === 'ok') out.sent++; else if (r === 'gone') out.gone++; else out.failed++;
+  const out: FanOut = { subs: 0, sent: 0, gone: 0, failed: 0, errors: [] };
+  if (!env.PUSH || !env.PUSH_VAPID_PRIVATE_KEY || !env.PUSH_VAPID_PUBLIC) {
+    out.errors.push('推送未配置（缺 KV 绑定或 VAPID 钥匙）');
+    return out;
+  }
+  const subs = await listSubs(env);
+  out.subs = subs.length;
+  for (const { key, sub } of subs) {
+    let o: SendOutcome;
+    try { o = await sendTo(env, key, sub, msg); } catch (e) {
+      o = { result: 'fail', detail: String(e instanceof Error ? e.message : e) };
+    }
+    if (o.result === 'ok') out.sent++;
+    else if (o.result === 'gone') out.gone++;
+    else {
+      out.failed++;
+      out.errors.push(`${hostOf(sub.endpoint)} ${o.status ?? '-'} ${o.detail ?? ''}`.trim());
+    }
   }
   return out;
+}
+
+function hostOf(u: string): string {
+  try { return new URL(u).host; } catch { return '?'; }
+}
+
+/** 最近几次推送的结果，存在 KV 里。拿现有的 KV 权限就能读，不必再给令牌开日志权限 */
+export const LOG_KEY = 'log:push';
+export const LOG_MAX = 30;
+
+export interface PushLogEntry extends FanOut {
+  at: string;
+  kind: 'report' | 'welcome';
+  task?: string;
+  date?: string;
+}
+
+/**
+ * 记一次推送。
+ *
+ * 为什么要有：09-29 豆瓣那档跑完，用户说没收到通知。KV 里能看到定时任务发现了
+ * 豆瓣、调用了推送，但推送**结果**没有落在任何地方——是没有订阅、Apple 拒了、
+ * 还是送达了但手机没弹，一样也分不出来，只能事后复现一次去猜。
+ * 同时打一行 console.log，给开了 observability 的场合用。
+ */
+export async function recordPush(env: Env, e: PushLogEntry): Promise<void> {
+  console.log(JSON.stringify({ push: 'newsdesk', ...e }));
+  if (!env.PUSH) return;
+  let log: PushLogEntry[] = [];
+  try { log = JSON.parse((await env.PUSH.get(LOG_KEY)) || '[]') as PushLogEntry[]; } catch { /* 坏了就重来 */ }
+  log.unshift(e);
+  await env.PUSH.put(LOG_KEY, JSON.stringify(log.slice(0, LOG_MAX)));
 }
 
 const json = (v: unknown, status = 200) =>
@@ -215,9 +269,15 @@ export async function route(request: Request, env: Env, url: URL): Promise<Respo
 
   // 立刻回推一条。既是欢迎语，也是唯一能在「点了开启」当场验证整条链路
   // （VAPID 签名、加密、投递、SW 弹窗）的办法——否则要等到下一档才知道通不通。
-  let welcome: SendResult = 'fail';
-  try { welcome = await sendTo(env, key, payload, {
-    title: '通知已开启', body: '新简报出炉时会在这里提醒你。', url: '/', tag: 'newsdesk-welcome' });
-  } catch { /* 下面如实回报 */ }
-  return json({ ok: true, welcome });
+  let o: SendOutcome = { result: 'fail' };
+  try {
+    o = await sendTo(env, key, payload, {
+      title: '通知已开启', body: '新简报出炉时会在这里提醒你。', url: '/', tag: 'newsdesk-welcome' });
+  } catch (e) { o = { result: 'fail', detail: String(e instanceof Error ? e.message : e) }; }
+  await recordPush(env, {
+    at: new Date().toISOString(), kind: 'welcome', subs: 1,
+    sent: o.result === 'ok' ? 1 : 0, gone: o.result === 'gone' ? 1 : 0, failed: o.result === 'fail' ? 1 : 0,
+    errors: o.result === 'fail' ? [`${hostOf(payload.endpoint)} ${o.status ?? '-'} ${o.detail ?? ''}`.trim()] : [],
+  });
+  return json({ ok: true, welcome: o.result });
 }

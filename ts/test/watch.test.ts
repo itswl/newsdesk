@@ -49,9 +49,12 @@ test('snapshot 只记状态', () => {
 
 class FakeKV {
   m = new Map<string, string>();
+  puts = 0; deletes = 0; putsBy = new Map<string, number>();
   async get(k: string) { return this.m.has(k) ? this.m.get(k)! : null; }
-  async put(k: string, v: string) { this.m.set(k, v); }
-  async delete(k: string) { this.m.delete(k); }
+  async put(k: string, v: string) {
+    this.puts++; this.putsBy.set(k, (this.putsBy.get(k) ?? 0) + 1); this.m.set(k, v);
+  }
+  async delete(k: string) { this.deletes++; this.m.delete(k); }
   async list({ prefix }: { prefix?: string } = {}) {
     return {
       keys: [...this.m.keys()].filter(k => !prefix || k.startsWith(prefix)).map(name => ({ name })),
@@ -110,4 +113,58 @@ test('同一次停更按小时节流，恢复后立刻解除', async () => {
     assert.equal(sent.length, 2, '恢复了不告警');
     assert.equal(kv.m.has('alerted:stale'), false, '恢复后要清掉节流，下次出事立刻响');
   } finally { globalThis.fetch = orig; }
+});
+
+// cron 每 10 分钟一次。基线没变还照写的话一天就是 144 次写入，而免费档 KV 一天
+// 只有 1000 次；额度耗尽时推送与订阅会静默失败
+test('基线没变就不写 KV', async () => {
+  const kv = new FakeKV();
+  const d = JSON.stringify(doc('2026-09-28', { ai: 'ok', douban: 'pending' }));
+  const seenPuts = () => kv.putsBy.get('seen:reports') ?? 0;
+  await watchReports(envKV(kv), d);            // 第一次：记基线
+  assert.equal(seenPuts(), 1);
+  await watchReports(envKV(kv), d);            // 同样的状态再来两轮
+  await watchReports(envKV(kv), d);
+  assert.equal(kv.puts, 1, '状态没变不该写任何东西');
+  // 状态变了：基线写一次；这是一档新简报，所以另外还有一条推送日志
+  await watchReports(envKV(kv), JSON.stringify(doc('2026-09-28', { ai: 'ok', douban: 'ok' })));
+  assert.equal(seenPuts(), 2, '基线在状态变了时写且只写一次');
+  assert.equal(kv.putsBy.get('log:push'), 1, '新简报要留一条推送日志');
+});
+
+test('停更自查：站点正常时不去删一个本来就不存在的节流键', async () => {
+  const kv = new FakeKV();
+  const env = { ...envKV(kv), ALERT_WEBHOOK: 'https://open.feishu.cn/x/hook' } as Env;
+  const now = 1790000000000;
+  const fresh = JSON.stringify({ generated_epoch: Math.floor(now / 1000), date: '2026-09-28', tasks: {} });
+  for (let i = 0; i < 5; i++) await staleWatch(env, { ok: true, status: 200, text: fresh }, now);
+  assert.equal(kv.deletes, 0, '每轮都 delete 一天就是 144 次，吃删除额度');
+});
+
+// 这条就是 09-29 缺的东西：定时任务发现了新报告、调用了推送，但结果没落在任何地方，
+// 事后只能复现一次去猜是没订阅、被拒了还是送达了没弹
+test('每推一档都在 KV 里记下结果：几个订阅、成功几个、失败原因', async () => {
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true,
+    ['sign', 'verify']) as CryptoKeyPair;
+  const { b64uEncode } = await import('../src/push.ts');
+  const kv = new FakeKV();
+  const env = {
+    ...envKV(kv),
+    PUSH_VAPID_PRIVATE_KEY: b64uEncode(await crypto.subtle.exportKey('pkcs8', kp.privateKey) as unknown as ArrayBuffer),
+    PUSH_VAPID_PUBLIC: b64uEncode(await crypto.subtle.exportKey('raw', kp.publicKey) as unknown as ArrayBuffer),
+  } as Env;
+  kv.m.set('seen:reports', JSON.stringify({ date: '2026-09-28', tasks: { ai: 'ok', douban: 'pending' } }));
+
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 201 })) as typeof fetch;
+  try {
+    // 没有订阅：推送照样尝试，日志要写明 subs=0——这正是「为什么没收到」的答案
+    await watchReports(env, JSON.stringify(doc('2026-09-28', { ai: 'ok', douban: 'ok' })));
+  } finally { globalThis.fetch = orig; }
+  const log = JSON.parse(kv.m.get('log:push') || '[]');
+  assert.equal(log.length, 1);
+  assert.equal(log[0].kind, 'report');
+  assert.equal(log[0].task, 'douban');
+  assert.equal(log[0].date, '2026-09-28');
+  assert.equal(log[0].subs, 0);
 });
