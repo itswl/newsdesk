@@ -177,6 +177,22 @@ test('同一轮出两档：各推一次，日志只写一次，基线照样推�
   assert.equal(posted, 2, '下一轮不该重推');
 });
 
+// 推出去了却记不住（当天写额度用完）的话，下一轮会把同样几档再推一遍，每 10 分钟一次。
+// 先记基线：记不住就这一轮先不推，下一轮记住了再推，一条都不重复
+test('基线写不进去：这一轮一条都不推，下一轮写进去了再推，只推一次', async () => {
+  const kv = new FakeKV();
+  const { env, status } = await twoFresh(kv);
+  let posted = 0;
+  const count = async () => { posted++; return new Response(null, { status: 201 }); };
+  kv.fail = (op, k) => op === 'put' && k === 'seen:reports';
+  await withFetch(count, () => assert.rejects(watchReports(env, status)));
+  assert.equal(posted, 0, '基线没记住就不能推');
+  kv.fail = undefined;
+  await withFetch(count, () => watchReports(env, status));
+  await withFetch(count, () => watchReports(env, status));
+  assert.equal(posted, 2, '记住之后两档各推一次，此后不再推');
+});
+
 test('日志写不进去，基线也要推进，不能下一轮重推', async () => {
   const kv = new FakeKV();
   const { env, status } = await twoFresh(kv);

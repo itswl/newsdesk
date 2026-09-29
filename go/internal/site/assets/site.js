@@ -190,10 +190,17 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
                 { endpoint: s.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth })
                 .catch(function () { return null; })
                 .then(function (r) {
-                  // 服务端订阅成功会立刻回推一条，welcome 就是那一条的投递结果
-                  if (r) { paint(true); say(r.welcome === 'ok' ? d.ok : d.fail); return; }
-                  // 服务端没收下（没配好、订阅满了、断网）：本地这份也撤掉。留着的话按钮
-                  // 显示「已开启」而服务端并没有它，再点一次反倒走进了上面的退订分支
+                  // 服务端订阅成功会立刻回推一条，welcome 就是那一条的投递结果。失败时
+                  // detail 是推送服务给的原因（如 403 BadJwtToken），原样带上：它不进任何
+                  // 日志，这是唯一能看到它的地方
+                  if (r && r.welcome !== 'gone') {
+                    paint(true);
+                    say(r.welcome === 'ok' ? d.ok : d.fail + (r.detail ? ' (' + r.detail + ')' : ''));
+                    return;
+                  }
+                  // 服务端没收下（没配好、当天额度满了、断网），或者推送服务说这个订阅已失效
+                  // （gone，服务端已经删了它）：本地这份也撤掉。留着的话按钮显示「已开启」
+                  // 而服务端并没有它，再点一次反倒走进了上面的退订分支
                   return s.unsubscribe().catch(function () {})
                     .then(function () { paint(null); say(d.fail); });
                 });

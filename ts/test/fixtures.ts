@@ -13,7 +13,10 @@ export class FakeKV {
   m = new Map<string, string>();
   puts = 0;
   deletes = 0;
+  lists = 0;
   putsBy = new Map<string, number>();
+  /** 每个键最后一次写入带的选项（比如 expirationTtl） */
+  optsBy = new Map<string, { expirationTtl?: number } | undefined>();
   /** 同一个键两次写入之间至少隔多久（毫秒）。真 KV 是 1000；0 = 不限 */
   sameKeyMs = 0;
   /** 返回 true 的那次操作直接抛错 */
@@ -21,7 +24,7 @@ export class FakeKV {
   lastPut = new Map<string, number>();
 
   async get(k: string) { this.check('get', k); return this.m.get(k) ?? null; }
-  async put(k: string, v: string) {
+  async put(k: string, v: string, opts?: { expirationTtl?: number }) {
     this.check('put', k);
     const now = Date.now(), last = this.lastPut.get(k);
     if (this.sameKeyMs && last !== undefined && now - last < this.sameKeyMs) {
@@ -30,11 +33,13 @@ export class FakeKV {
     this.lastPut.set(k, now);
     this.puts++;
     this.putsBy.set(k, (this.putsBy.get(k) ?? 0) + 1);
+    this.optsBy.set(k, opts);
     this.m.set(k, v);
   }
   async delete(k: string) { this.check('delete', k); this.deletes++; this.m.delete(k); }
   async list({ prefix }: { prefix?: string } = {}) {
     this.check('list', prefix ?? '');
+    this.lists++;
     return {
       keys: [...this.m.keys()].filter(k => !prefix || k.startsWith(prefix)).map(name => ({ name })),
       list_complete: true as const, cacheStatus: null,
