@@ -7,7 +7,9 @@ package config
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
+	"maps"
 	"os"
 	"strconv"
 	"strings"
@@ -22,18 +24,24 @@ type Config struct {
 // Load 读指定路径。文件不存在返回空配置而非错误——只在本机看简报时
 // 整个配置都是可选的，不该因此拒绝启动。
 func Load(path string) (*Config, error) {
-	c := &Config{vals: map[string]string{}, Path: path}
-	f, err := os.Open(path)
+	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return c, nil
+		return &Config{vals: map[string]string{}, Path: path}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("打开 %s: %w", path, err)
+		return nil, fmt.Errorf("读 %s: %w", path, err)
 	}
-	defer f.Close()
+	return Parse(path, raw)
+}
 
+// Parse 解析已经读出来的配置内容，path 只用于报错和 Config.Path。
+//
+// 单独拿出来给调度器用：它解析的必须正是它比对过的那份字节。分成「比一次、
+// 再打开读一次」的话，两步之间落下的一次保存会让两边对不上。
+func Parse(path string, raw []byte) (*Config, error) {
+	c := &Config{vals: map[string]string{}, Path: path}
 	seen := map[string]int{}
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(bytes.NewReader(raw))
 	for line := 1; sc.Scan(); line++ {
 		s := sc.Text()
 		if i := strings.IndexByte(s, '#'); i >= 0 {
@@ -45,7 +53,9 @@ func Load(path string) (*Config, error) {
 		}
 		k, v, ok := strings.Cut(s, "=")
 		if !ok {
-			return nil, fmt.Errorf("%s:%d 不是 KEY=value: %q", path, line, s)
+			// ⚠️ 只报行号，不回显这一行：少了 = 的多半是贴错地方的凭据（一截令牌、
+			// 一个 webhook、折行的私钥），而这条报错会进调度器日志、会发到告警群里。
+			return nil, fmt.Errorf("%s:%d 不是 KEY=value（内容不回显，这一行可能是凭据）", path, line)
 		}
 		k = strings.TrimSpace(k)
 		v = strings.Trim(strings.TrimSpace(v), `"'`)
@@ -107,6 +117,11 @@ func (c *Config) Require(keys ...string) error {
 		return fmt.Errorf("%s 缺少必需项: %s", c.Path, strings.Join(missing, "、"))
 	}
 	return nil
+}
+
+// Equal 两份配置的键值是否完全相同。路径不算：同样的内容换个地方读出来还是同一份。
+func (c *Config) Equal(o *Config) bool {
+	return maps.Equal(c.vals, o.vals)
 }
 
 // All 返回全部键值的一份拷贝。给发布前的凭据自检用——它需要知道「真实值

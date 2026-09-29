@@ -111,6 +111,26 @@ func secretValues(cfg *config.Config) map[string]string {
 	return out
 }
 
+// Republish 重建站点、自检、发布，不跑采集与分析，也就不调模型。
+//
+// newsdesk publish 与调度器（一档跑的途中配置改过，跑完按新配置重发）共用这一份，
+// 「先自检、后发布」的顺序只写在一处。
+func Republish(ctx context.Context, root string, cfg *config.Config, dry bool, out io.Writer) error {
+	localDir, publicDir, err := Site(root, cfg, out)
+	if err != nil {
+		return err
+	}
+	// 发布前必须自检。放到发布之后等于没有自检。
+	dirs := []string{localDir, filepath.Join(root, "reports")}
+	if publicDir != "" && publicDir != localDir {
+		dirs = append(dirs, publicDir)
+	}
+	if err := LeakCheck(root, cfg, dirs...); err != nil {
+		return err
+	}
+	return Publish(ctx, root, publicDir, cfg, dry, out)
+}
+
 // LeakCheck 发布前扫产出。命中就拒绝发布——报告第二天就在公开站点上，
 // 沙箱禁网拦不住「写进报告」这条路径。
 func LeakCheck(root string, cfg *config.Config, dirs ...string) error {

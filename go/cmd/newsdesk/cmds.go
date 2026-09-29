@@ -146,20 +146,19 @@ func cmdPublish(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	if !*skipBuild {
+		return pipeline.Republish(ctx, root, cfg, *dry, os.Stdout)
+	}
+	// --no-build 直接发 site/ 会把整个历史都发出去：site/ 是全量的，
+	// 按窗口截断的那份在 state/publish 下。配了 PUBLIC_DAYS 却发全量，
+	// 等于悄悄把「只展示最近 N 天」这个承诺撤销了，而且不报错。
 	publicDir := ""
-	if *skipBuild {
-		// --no-build 直接发 site/ 会把整个历史都发出去：site/ 是全量的，
-		// 按窗口截断的那份在 state/publish 下。配了 PUBLIC_DAYS 却发全量，
-		// 等于悄悄把「只展示最近 N 天」这个承诺撤销了，而且不报错。
-		if cfg.Int("PUBLIC_DAYS", 0) > 0 {
-			publicDir = filepath.Join(root, "state", "publish")
-			if _, err := os.Stat(publicDir); err != nil {
-				return fmt.Errorf("配了 PUBLIC_DAYS 但 %s 不存在：--no-build 会把全量站点发出去。"+
-					"去掉 --no-build 重建一次", publicDir)
-			}
+	if cfg.Int("PUBLIC_DAYS", 0) > 0 {
+		publicDir = filepath.Join(root, "state", "publish")
+		if _, err := os.Stat(publicDir); err != nil {
+			return fmt.Errorf("配了 PUBLIC_DAYS 但 %s 不存在：--no-build 会把全量站点发出去。"+
+				"去掉 --no-build 重建一次", publicDir)
 		}
-	} else if _, publicDir, err = pipeline.Site(root, cfg, os.Stdout); err != nil {
-		return err
 	}
 	// 发布前必须自检。放到发布之后等于没有自检。
 	dirs := []string{filepath.Join(root, "site"), filepath.Join(root, "reports")}
@@ -213,7 +212,8 @@ func cmdSchedule(ctx context.Context, args []string) error {
 		return err
 	}
 	l := schedule.NewLoop(root, home(), cfg)
-	l.WatchConfig(configPath(root))
+	l.Version = version
+	l.WatchConfig(cfg.Path)
 	return l.Run(ctx)
 }
 
@@ -237,6 +237,7 @@ func cmdStatus(ctx context.Context, args []string) error {
 		PID            int    `json:"pid"`
 		Running        string `json:"running"`
 		RunningSince   string `json:"running_since"`
+		Version        string `json:"version"`
 	}
 	haveHealth := false
 	if raw, err := os.ReadFile(st.State("health.json")); err == nil && json.Unmarshal(raw, &h) == nil && h.HeartbeatEpoch > 0 {
@@ -296,6 +297,12 @@ func cmdStatus(ctx context.Context, args []string) error {
 		fmt.Println("调度器：从未运行过")
 	case alive:
 		fmt.Printf("调度器：运行中（pid %d，心跳 %s 前）\n", h.PID, age.Round(time.Second))
+		// 重新编译之后不重启，调度器会一直跑旧代码，各处日志照常显示「完成」——
+		// 合并到上线之间最容易漏的一步。旧调度器不报版本（空），那就无从比起
+		if h.Version != "" && version != "dev" && h.Version != version {
+			fmt.Printf("  ⚠ 调度器跑的是 %s，磁盘上的二进制是 %s：重启才生效"+
+				"（newsdesk stop && newsdesk schedule -d）\n", h.Version, version)
+		}
 	default:
 		fmt.Printf("调度器：已停止（pid %d，心跳 %s 前）\n", h.PID, age.Round(time.Second))
 	}
