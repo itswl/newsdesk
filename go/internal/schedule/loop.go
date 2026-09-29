@@ -28,18 +28,79 @@ type Loop struct {
 	healthPath string
 	auditAt    string   // 日终核对时刻 HH:MM
 	sched      []string // 时间表文案，写进 health.json
+
+	cfgPath  string    // 空 = 不监视配置文件（测试、一次性命令）
+	cfgMtime time.Time // 上次看到的修改时刻；读坏了也记，免得同一份坏文件每 30 秒告警一次
 }
 
 func NewLoop(root, home string, cfg *config.Config) *Loop {
 	st := store.New(root)
-	return &Loop{
-		Root: root, Home: home, Cfg: cfg,
+	l := &Loop{
+		Root: root, Home: home,
 		Tick:       30 * time.Second,
-		notifier:   notify.New(cfg.Get("ALERT_WEBHOOK", ""), cfg.Get("ALERT_PAYLOAD", "")),
 		statePath:  st.State("schedule.json"),
 		healthPath: st.State("health.json"),
-		auditAt:    cfg.Get("AUDIT_AT", "23:30"),
 	}
+	l.applyConfig(cfg)
+	return l
+}
+
+// applyConfig 把配置和所有从它派生出来的东西一起换掉。
+//
+// 只换 Cfg 不够：告警通道与日终核对时刻是构造时从配置里取出来缓存的，
+// 漏了它们的话改了 ALERT_WEBHOOK，告警照样发往旧地址。
+func (l *Loop) applyConfig(cfg *config.Config) {
+	l.Cfg = cfg
+	l.notifier = notify.New(cfg.Get("ALERT_WEBHOOK", ""), cfg.Get("ALERT_PAYLOAD", ""))
+	l.auditAt = cfg.Get("AUDIT_AT", "23:30")
+}
+
+// WatchConfig 让调度器在配置文件改动后自己重读，不用重启。
+//
+// 为什么需要：调度器常驻，以前只在启动时读一次配置。09-29 把推送公钥写进
+// config.conf、手动 publish 之后线上出现了通知开关；但调度器是半夜启动的，
+// 当天中午那一档重建站点时用的还是旧配置，生成的页面没有开关，还把手动发布
+// 的那版覆盖掉了。「改了配置」和「生效了」之间差一次重启，而这一步谁都会忘。
+func (l *Loop) WatchConfig(path string) {
+	l.cfgPath = path
+	if fi, err := os.Stat(path); err == nil {
+		l.cfgMtime = fi.ModTime()
+	}
+}
+
+// reloadConfig 配置文件的修改时刻变了就重读。
+//
+// 每轮 tick 都会调，代价是一次 stat。正在跑的那一档不受影响——它拿着开跑时
+// 的那份配置跑完，改动从下一轮起生效，不会半途换引擎。
+//
+// ⚠️ 读坏了（比如写出重复键）**沿用旧配置**，告警一次，不中断调度：一个编辑到
+// 一半的配置文件不该让当天剩下的几档全部停摆。修改时刻照样记下，同一份坏文件
+// 不会每 30 秒告警一次；再改一次就会重新尝试。
+func (l *Loop) reloadConfig() (changed bool, err error) {
+	if l.cfgPath == "" {
+		return false, nil
+	}
+	fi, err := os.Stat(l.cfgPath)
+	if err != nil || fi.ModTime().Equal(l.cfgMtime) {
+		return false, nil // 暂时读不到就等下一轮，别为一次 stat 失败告警
+	}
+	l.cfgMtime = fi.ModTime()
+
+	cfg, err := config.Load(l.cfgPath)
+	if err != nil {
+		l.logf("!! 配置文件改动后读不出来，沿用上一份：%v", err)
+		l.alert("newsdesk 配置文件有误", fmt.Sprintf(
+			"config.conf 改动后解析失败，调度器沿用上一份配置继续运行：\n%v\n修好后会自动重新读取，不用重启。", err))
+		return false, err
+	}
+	before := engine.PlanLine(l.Cfg)
+	l.applyConfig(cfg)
+	l.logf("配置已重新读取（config.conf 修改于 %s），下一档起生效", fi.ModTime().Format("15:04:05"))
+	// 引擎变了要说出来：报告是谁写的必须看得见
+	if after := engine.PlanLine(cfg); after != before {
+		l.logf("%s", after)
+	}
+	return true, nil
 }
 
 func (l *Loop) alert(title, text string) {
@@ -115,6 +176,7 @@ func (l *Loop) Run(ctx context.Context) error {
 }
 
 func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
+	_, _ = l.reloadConfig() // 出错已在里面告警并沿用旧配置，这里不必再管
 	now := time.Now()
 	for _, t := range task.All {
 		// 先跟产出对一次账。手动跑过的档在调度状态里没有记录，被中断过的档

@@ -112,3 +112,82 @@ func TestReconcileDoesNotLookAtOtherDays(t *testing.T) {
 		t.Fatal("昨天的报告不能算今天的")
 	}
 }
+
+// 改了 config.conf 要在下一轮自己生效，不用重启调度器。09-29 就是因为改完没重启，
+// 中午那档用旧配置重建站点，把刚上线的通知开关冲掉了。
+func TestConfigReloadsWhenFileChanges(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, "config.conf")
+	writeConf := func(body string, at time.Time) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// 显式拨时刻：文件系统的 mtime 精度可能只有秒级，连写两次会撞上同一个值
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t0 := time.Date(2026, 9, 29, 9, 0, 0, 0, time.Local)
+	writeConf("AUDIT_AT=23:30\nPUSH_VAPID_PUBLIC=\n", t0)
+	cfg, err := config.Load(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	l := NewLoop(root, root, cfg)
+	l.WatchConfig(p)
+
+	if changed, _ := l.reloadConfig(); changed {
+		t.Fatal("文件没动不该重读")
+	}
+
+	writeConf("AUDIT_AT=22:00\nPUSH_VAPID_PUBLIC=BEXAMPLE\n", t0.Add(time.Minute))
+	if changed, err := l.reloadConfig(); !changed || err != nil {
+		t.Fatalf("改了应当重读，得到 changed=%v err=%v", changed, err)
+	}
+	if got := l.Cfg.Get("PUSH_VAPID_PUBLIC", ""); got != "BEXAMPLE" {
+		t.Errorf("新值没生效：%q", got)
+	}
+	if l.auditAt != "22:00" {
+		t.Errorf("从配置派生的东西也要跟着换，auditAt=%q", l.auditAt)
+	}
+}
+
+// 读坏了沿用旧配置、不中断调度，而且同一份坏文件只告警一次——否则每 30 秒一条。
+func TestBrokenConfigKeepsOldAndDoesNotRetryTheSameFile(t *testing.T) {
+	root := t.TempDir()
+	p := filepath.Join(root, "config.conf")
+	t0 := time.Date(2026, 9, 29, 9, 0, 0, 0, time.Local)
+	put := func(body string, at time.Time) {
+		t.Helper()
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(p, at, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("ENGINE=claude\n", t0)
+	cfg, _ := config.Load(p)
+	l := NewLoop(root, root, cfg)
+	l.WatchConfig(p)
+
+	put("ENGINE=codex\nENGINE=api\n", t0.Add(time.Minute)) // 重复键：解析器直接报错
+	if _, err := l.reloadConfig(); err == nil {
+		t.Fatal("重复键应当报错")
+	}
+	if got := l.Cfg.Get("ENGINE", ""); got != "claude" {
+		t.Errorf("读坏了要沿用旧配置，现在是 %q", got)
+	}
+	if changed, err := l.reloadConfig(); changed || err != nil {
+		t.Errorf("同一份坏文件不该再试一次（会每 30 秒告警）：changed=%v err=%v", changed, err)
+	}
+
+	put("ENGINE=api\n", t0.Add(2*time.Minute)) // 修好了
+	if changed, err := l.reloadConfig(); !changed || err != nil {
+		t.Fatalf("修好之后应当重新读取：changed=%v err=%v", changed, err)
+	}
+	if got := l.Cfg.Get("ENGINE", ""); got != "api" {
+		t.Errorf("修好后的值没生效：%q", got)
+	}
+}
