@@ -54,11 +54,15 @@ func isRoot(d string) (bool, error) {
 //
 // 只有一个文件、一个解析器。配置缺失不是错误——只在本机看简报时整份配置都是可选的。
 func loadConfig(root string) (*config.Config, error) {
-	p := os.Getenv("NEWSDESK_CONFIG")
-	if p == "" {
-		p = filepath.Join(root, "config.conf")
+	return config.Load(configPath(root))
+}
+
+// configPath 配置文件的位置。单列出来是因为调度器要拿它去监视改动。
+func configPath(root string) string {
+	if p := os.Getenv("NEWSDESK_CONFIG"); p != "" {
+		return p
 	}
-	return config.Load(p)
+	return filepath.Join(root, "config.conf")
 }
 
 func home() string {

@@ -212,7 +212,9 @@ func cmdSchedule(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	return schedule.NewLoop(root, home(), cfg).Run(ctx)
+	l := schedule.NewLoop(root, home(), cfg)
+	l.WatchConfig(configPath(root))
+	return l.Run(ctx)
 }
 
 func cmdStatus(ctx context.Context, args []string) error {
