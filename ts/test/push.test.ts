@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hkdfSync } from 'node:crypto';
-import { b64uDecode, b64uEncode, encrypt, MAX_SUBS, route, validSub, vapidAuth } from '../src/push.ts';
+import { b64uDecode, b64uEncode, encrypt, LOG_KEY, LOG_MAX, MAX_SUBS, push, recordPush, route, validSub, vapidAuth } from '../src/push.ts';
+import type { PushLogEntry } from '../src/push.ts';
 import type { Env } from '../src/env.ts';
 
 const u8 = (v: ArrayBuffer | Uint8Array) => v instanceof Uint8Array ? v : new Uint8Array(v);
@@ -240,4 +241,77 @@ test('订阅数有上限：公开端点不能被灌满', async () => {
 test('没配 KV 时整条推送静默关闭而不是报错', async () => {
   const res = await call({} as Env, '/push/subscribe', subBody('https://web.push.apple.com/x'));
   assert.equal(res.status, 503);
+});
+
+const logOf = (kv: FakeKV) => JSON.parse(kv.m.get(LOG_KEY) || '[]') as PushLogEntry[];
+
+// 失败时要把推送服务给的原因带回来。只留一个状态码的话，「为什么没收到」
+// 永远只能回答「失败了」，而 Apple 其实写明了是哪一种（BadJwtToken、BadDeviceToken…）
+test('推送失败时记下状态码与推送服务给的原因', async () => {
+  const { env, kv } = await envWithKV();
+  const orig = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = (async () => (n++ === 0
+    ? new Response(null, { status: 201 })                                        // 订阅时的欢迎推送
+    : new Response('{"reason":"BadJwtToken"}', { status: 403 }))) as typeof fetch;  // 之后的正式推送
+  try {
+    await call(env, '/push/subscribe', subBody('https://web.push.apple.com/a'));
+    const out = await push(env, { title: 't', body: 'b' });
+    assert.equal(out.subs, 1);
+    assert.equal(out.failed, 1);
+    assert.equal(out.sent, 0);
+    assert.match(out.errors[0]!, /^web\.push\.apple\.com 403 .*BadJwtToken/);
+  } finally { globalThis.fetch = orig; }
+  assert.equal([...kv.m.keys()].filter(k => k.startsWith('sub:')).length, 1, '403 不是失效，订阅要留着');
+});
+
+test('投递时抛异常也要记下原因，而不是只数一个失败', async () => {
+  const { env } = await envWithKV();
+  const orig = globalThis.fetch;
+  let n = 0;
+  globalThis.fetch = (async () => {
+    if (n++ === 0) return new Response(null, { status: 201 });
+    throw new Error('network down');
+  }) as typeof fetch;
+  try {
+    await call(env, '/push/subscribe', subBody('https://web.push.apple.com/b'));
+    const out = await push(env, { title: 't', body: 'b' });
+    assert.equal(out.failed, 1);
+    assert.match(out.errors[0]!, /network down/);
+  } finally { globalThis.fetch = orig; }
+});
+
+// sent=0 分不清「没人订」和「全失败」，而前者是「为什么没收到」最常见的答案
+test('没有订阅时 subs=0，与全部失败区分开', async () => {
+  const { env } = await envWithKV();
+  const out = await push(env, { title: 't', body: 'b' });
+  assert.deepEqual(out, { subs: 0, sent: 0, gone: 0, failed: 0, errors: [] });
+});
+
+test('推送没配置时要说出来，不是安静地返回全零', async () => {
+  const out = await push({} as Env, { title: 't', body: 'b' });
+  assert.equal(out.subs, 0);
+  assert.match(out.errors[0]!, /未配置/);
+});
+
+test('订阅时的欢迎推送也记进日志', async () => {
+  const { env, kv } = await envWithKV();
+  const orig = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(null, { status: 201 })) as typeof fetch;
+  try { await call(env, '/push/subscribe', subBody('https://web.push.apple.com/c')); }
+  finally { globalThis.fetch = orig; }
+  const log = logOf(kv);
+  assert.equal(log.length, 1);
+  assert.equal(log[0]!.kind, 'welcome');
+  assert.equal(log[0]!.sent, 1);
+});
+
+test('推送日志只留最近几条，新的在前', async () => {
+  const { env, kv } = await envWithKV();
+  for (let i = 0; i < LOG_MAX + 5; i++) {
+    await recordPush(env, { at: String(i), kind: 'report', task: 'ai', subs: 1, sent: 1, gone: 0, failed: 0, errors: [] });
+  }
+  const log = logOf(kv);
+  assert.equal(log.length, LOG_MAX, '要有上限，否则一个值会无限长大');
+  assert.equal(log[0]!.at, String(LOG_MAX + 4), '最新的在最前');
 });

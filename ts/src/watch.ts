@@ -4,7 +4,7 @@
 // 够得着；而 Worker 本来就在定时拉 status.json 做停更自查，顺路比对即可，
 // 流水线那边一行都不用改。代价是最多一个轮询间隔的延迟。
 import type { Env } from './env.ts';
-import { push } from './push.ts';
+import { push, recordPush } from './push.ts';
 
 export interface TaskRow { status?: string; finished?: string; label?: string }
 export interface StatusDoc { date?: string; tasks?: Record<string, TaskRow> }
@@ -61,18 +61,18 @@ export async function watchReports(env: Env, text: string): Promise<void> {
 
   const fresh = first ? [] : newReports(doc, seen);
   for (const r of fresh) {
-    await push(env, {
+    const out = await push(env, {
       title: `${r.label} 已更新`,
       body: r.finished ? `${doc.date} ${r.finished} 出炉` : String(doc.date),
       url: `/#${r.key}`,
       // 同一档的通知互相覆盖，不在锁屏上堆成一列
       tag: `newsdesk-${r.key}`,
     });
+    await recordPush(env, { at: new Date().toISOString(), kind: 'report', task: r.key, date: doc.date, ...out });
   }
-  // 每轮都把基线推进到当前状态：即便这轮没有新报告，也要记下跨日与中间态，
-  // 否则下一轮会拿着过期的基线重算
-  await env.PUSH.put(SEEN_KEY, JSON.stringify(snapshot(doc)));
-  if (fresh.length) {
-    console.log(JSON.stringify({ push: 'newsdesk', date: doc.date, tasks: fresh.map(f => f.key) }));
-  }
+  // 基线推进到当前状态，但**只在真的变了时才写**：cron 每 10 分钟一次，无条件写
+  // 一天就是 144 次，而免费档 KV 一天只有 1000 次写入。额度耗尽时推送与订阅会
+  // 静默失败。status.json 的键由 Go 按字母序输出，同样的状态序列化出来逐字相同。
+  const next = JSON.stringify(snapshot(doc));
+  if (next !== raw) await env.PUSH.put(SEEN_KEY, next);
 }

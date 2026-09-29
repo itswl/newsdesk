@@ -109,7 +109,9 @@ export async function staleWatch(env: Env, got: { ok: boolean; status: number; t
   }));
 
   if (!verdict.bad) {
-    await env.PUSH?.delete(ALERTED_KEY); // 恢复了就清掉节流，下次出事立刻响
+    // 恢复了就清掉节流，下次出事立刻响。先读再删：cron 每 10 分钟一次，无条件
+    // delete 一天就是 144 次，而免费档 KV 的删除额度一天只有 1000 次（读有十万次）
+    if (env.PUSH && (await env.PUSH.get(ALERTED_KEY))) await env.PUSH.delete(ALERTED_KEY);
     return;
   }
   if (env.PUSH) {
