@@ -33,6 +33,7 @@ const usage = `newsdesk —— 每日简报流水线
   restore             从私有桶拉回 reports / data / site / state
   leakcheck           扫产出里有没有混进凭据
   prune               清理过期数据
+  worker <参数>        在 ts/ 下跑 wrangler（如 worker deploy），令牌取自 config.conf
 
 自检：
   doctor              检查配置、时间表、沙箱、依赖
@@ -84,6 +85,8 @@ func main() {
 		err = cmdLangs(ctx, args)
 	case "sandbox":
 		err = cmdSandbox(ctx, args)
+	case "worker":
+		err = cmdWorker(ctx, args)
 	case "version", "--version", "-v":
 		fmt.Println("newsdesk " + version)
 	case "help", "-h", "--help":
