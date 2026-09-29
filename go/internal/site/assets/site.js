@@ -187,10 +187,17 @@ if ('serviceWorker' in navigator && window.isSecureContext) {
             .then(function (s) {
               var j = s.toJSON();
               return post('/push/subscribe',
-                { endpoint: s.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth });
-            })
-            // 服务端订阅成功会立刻回推一条，welcome 就是那一条的投递结果
-            .then(function (r) { paint(true); say(r && r.welcome === 'ok' ? d.ok : d.fail); });
+                { endpoint: s.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth })
+                .catch(function () { return null; })
+                .then(function (r) {
+                  // 服务端订阅成功会立刻回推一条，welcome 就是那一条的投递结果
+                  if (r) { paint(true); say(r.welcome === 'ok' ? d.ok : d.fail); return; }
+                  // 服务端没收下（没配好、订阅满了、断网）：本地这份也撤掉。留着的话按钮
+                  // 显示「已开启」而服务端并没有它，再点一次反倒走进了上面的退订分支
+                  return s.unsubscribe().catch(function () {})
+                    .then(function () { paint(null); say(d.fail); });
+                });
+            });
         });
       });
     }).catch(function () { paint(null); say(d.fail); });

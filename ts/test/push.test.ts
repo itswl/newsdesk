@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hkdfSync } from 'node:crypto';
-import { b64uDecode, b64uEncode, encrypt, LOG_KEY, LOG_MAX, MAX_SUBS, push, recordPush, route, validSub, vapidAuth } from '../src/push.ts';
+import { b64uDecode, b64uEncode, encrypt, LOG_KEY, LOG_MAX, MAX_SUBS, push, recordPush, route, sendTo, validSub, vapidAuth, WELCOME_LOG_KEY } from '../src/push.ts';
 import type { PushLogEntry } from '../src/push.ts';
 import type { Env } from '../src/env.ts';
+import { envOf, FakeKV, subBody, vapidEnv, withFetch } from './fixtures.ts';
 
 const u8 = (v: ArrayBuffer | Uint8Array) => v instanceof Uint8Array ? v : new Uint8Array(v);
 
@@ -140,40 +141,10 @@ test('订阅形状校验', () => {
   assert.ok(!validSub(null));
 });
 
-class FakeKV {
-  m = new Map<string, string>();
-  async get(k: string) { return this.m.has(k) ? this.m.get(k)! : null; }
-  async put(k: string, v: string) { this.m.set(k, v); }
-  async delete(k: string) { this.m.delete(k); }
-  async list({ prefix }: { prefix?: string } = {}) {
-    return {
-      keys: [...this.m.keys()].filter(k => !prefix || k.startsWith(prefix)).map(name => ({ name })),
-      list_complete: true as const, cacheStatus: null,
-    };
-  }
-}
-
 async function envWithKV(): Promise<{ env: Env; kv: FakeKV }> {
-  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true,
-    ['sign', 'verify']) as CryptoKeyPair;
   const kv = new FakeKV();
-  const env = {
-    PUSH: kv as unknown as KVNamespace,
-    PUSH_VAPID_PRIVATE_KEY: b64uEncode(await crypto.subtle.exportKey('pkcs8', kp.privateKey) as unknown as ArrayBuffer),
-    PUSH_VAPID_PUBLIC: b64uEncode(await crypto.subtle.exportKey('raw', kp.publicKey) as unknown as ArrayBuffer),
-  } as Env;
-  return { env, kv };
+  return { env: await vapidEnv(kv), kv };
 }
-
-// p256dh 必须是曲线上的真实点：随手拼 0x04 加一串字节会被 importKey 拒掉
-// （这是对的——真浏览器给的一定是真点，但测试得跟着真实）
-const uaPair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true,
-  ['deriveBits']) as CryptoKeyPair;
-const uaRaw = b64uEncode(await crypto.subtle.exportKey('raw', uaPair.publicKey) as unknown as ArrayBuffer);
-
-const subBody = (endpoint: string) => ({
-  endpoint, p256dh: uaRaw, auth: b64uEncode(new Uint8Array(16).fill(3)),
-});
 
 function call(env: Env, path: string, body: unknown, method = 'POST'): Promise<Response> {
   const url = new URL('https://news.example.com' + path);
@@ -243,7 +214,7 @@ test('没配 KV 时整条推送静默关闭而不是报错', async () => {
   assert.equal(res.status, 503);
 });
 
-const logOf = (kv: FakeKV) => JSON.parse(kv.m.get(LOG_KEY) || '[]') as PushLogEntry[];
+const logOf = (kv: FakeKV, key = LOG_KEY) => JSON.parse(kv.m.get(key) || '[]') as PushLogEntry[];
 
 // 失败时要把推送服务给的原因带回来。只留一个状态码的话，「为什么没收到」
 // 永远只能回答「失败了」，而 Apple 其实写明了是哪一种（BadJwtToken、BadDeviceToken…）
@@ -300,7 +271,8 @@ test('订阅时的欢迎推送也记进日志', async () => {
   globalThis.fetch = (async () => new Response(null, { status: 201 })) as typeof fetch;
   try { await call(env, '/push/subscribe', subBody('https://web.push.apple.com/c')); }
   finally { globalThis.fetch = orig; }
-  const log = logOf(kv);
+  assert.equal(kv.m.has(LOG_KEY), false, '欢迎推送不进定时推送的日志，免得刷订阅就能把它挤掉');
+  const log = logOf(kv, WELCOME_LOG_KEY);
   assert.equal(log.length, 1);
   assert.equal(log[0]!.kind, 'welcome');
   assert.equal(log[0]!.sent, 1);
@@ -309,9 +281,137 @@ test('订阅时的欢迎推送也记进日志', async () => {
 test('推送日志只留最近几条，新的在前', async () => {
   const { env, kv } = await envWithKV();
   for (let i = 0; i < LOG_MAX + 5; i++) {
-    await recordPush(env, { at: String(i), kind: 'report', task: 'ai', subs: 1, sent: 1, gone: 0, failed: 0, errors: [] });
+    await recordPush(env, LOG_KEY, { at: String(i), kind: 'report', task: 'ai', subs: 1, sent: 1, gone: 0, failed: 0, errors: [] });
   }
   const log = logOf(kv);
   assert.equal(log.length, LOG_MAX, '要有上限，否则一个值会无限长大');
   assert.equal(log[0]!.at, String(LOG_MAX + 4), '最新的在最前');
+});
+
+const entry = (at: string): PushLogEntry =>
+  ({ at, kind: 'report', task: 'ai', subs: 1, sent: 1, gone: 0, failed: 0, errors: [] });
+
+test('一次记几条只写一次 KV，新的在前', async () => {
+  const { env, kv } = await envWithKV();
+  kv.sameKeyMs = 1000; // 真 KV：同一个键一秒只许写一次
+  await recordPush(env, LOG_KEY, entry('1'), entry('2'));
+  assert.equal(kv.putsBy.get(LOG_KEY), 1);
+  assert.deepEqual(logOf(kv).map(e => e.at), ['2', '1']);
+});
+
+// 日志是诊断用的。它写不进去不能反过来拦住推送、基线或订阅
+test('日志写不进去也不抛', async () => {
+  const { env, kv } = await envWithKV();
+  kv.fail = op => op === 'put';
+  await recordPush(env, LOG_KEY, entry('1'));
+  kv.fail = op => op === 'get';
+  await recordPush(env, LOG_KEY, entry('2'));
+});
+
+// 有人照着文档用 wrangler 查日志时顺手写了个 null 进去：以前从那以后每一次记录都抛
+test('日志里存着合法 JSON 但不是数组，也能接着记', async () => {
+  for (const junk of ['null', '{}', '"x"', '7']) {
+    const { env, kv } = await envWithKV();
+    kv.m.set(LOG_KEY, junk);
+    await recordPush(env, LOG_KEY, entry('1'));
+    assert.deepEqual(logOf(kv).map(e => e.at), ['1'], `存着 ${junk} 时`);
+  }
+});
+
+test('读日志失败就不写，不拿一份空的盖掉已有记录', async () => {
+  const { env, kv } = await envWithKV();
+  await recordPush(env, LOG_KEY, entry('old'));
+  kv.fail = op => op === 'get';
+  await recordPush(env, LOG_KEY, entry('new'));
+  kv.fail = undefined;
+  assert.deepEqual(logOf(kv).map(e => e.at), ['old']);
+});
+
+// 订阅已经存下、欢迎推送也送到了，日志写不进去不能让页面说「开启失败」——
+// 用户再点一次就走进了退订
+test('欢迎推送的日志写不进去，订阅照样回 ok', async () => {
+  const { env, kv } = await envWithKV();
+  kv.fail = (op, k) => op === 'put' && k === WELCOME_LOG_KEY;
+  const res = await withFetch(async () => new Response(null, { status: 201 }),
+    () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/logfail')));
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, welcome: 'ok' });
+  assert.equal(kv.subs().length, 1);
+});
+
+// 缺钥匙时 subs 以前报 0，照文档「subs 为 0 就是没人订」去查，查的是错的方向
+test('缺 VAPID 钥匙但有订阅：subs 如实报出，并写明一条都没发', async () => {
+  const { env, kv } = await envWithKV();
+  await withFetch(async () => new Response(null, { status: 201 }),
+    () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/k')));
+  let posted = 0;
+  const out = await withFetch(async () => { posted++; return new Response(null, { status: 201 }); },
+    () => push(envOf(kv), { title: 't', body: 'b' }));
+  assert.equal(out.subs, 1);
+  assert.equal(out.sent, 0);
+  assert.equal(posted, 0);
+  assert.match(out.errors[0]!, /VAPID/);
+});
+
+test('缺 VAPID 钥匙时不收订阅：收下也发不出去，页面却会显示已开启', async () => {
+  const kv = new FakeKV();
+  const res = await call(envOf(kv), '/push/subscribe', subBody('https://web.push.apple.com/nokey'));
+  assert.equal(res.status, 503);
+  assert.equal(kv.subs().length, 0);
+});
+
+test('订阅只存校验过的三项，请求里夹带的东西不进 KV', async () => {
+  const { env, kv } = await envWithKV();
+  await withFetch(async () => new Response(null, { status: 201 }),
+    () => call(env, '/push/subscribe', { ...subBody('https://web.push.apple.com/extra'), junk: 'x'.repeat(5000) }));
+  const stored = JSON.parse(kv.m.get(kv.subs()[0]!)!);
+  assert.deepEqual(Object.keys(stored).sort(), ['auth', 'endpoint', 'p256dh']);
+});
+
+test('同一份订阅重复提交不再写 KV，退订不存在的订阅不耗删除额度', async () => {
+  const { env, kv } = await envWithKV();
+  await withFetch(async () => new Response(null, { status: 201 }), async () => {
+    for (let i = 0; i < 3; i++) await call(env, '/push/subscribe', subBody('https://web.push.apple.com/same'));
+  });
+  assert.equal(kv.putsBy.get(kv.subs()[0]!), 1, '公开端点，每次都写的话写额度会被刷光');
+  await call(env, '/push/unsubscribe', { endpoint: 'https://web.push.apple.com/never-subscribed' });
+  assert.equal(kv.deletes, 0);
+});
+
+const sub = subBody('https://push.example.net/x');
+
+// endpoint 是任何人都能登记的。回 500 加一个没完没了的正文，以前会被整个读进内存
+test('推送服务回一个没完没了的正文：只读开头就停', async () => {
+  const { env } = await envWithKV();
+  let pulled = 0, cancelled = false;
+  const endless = new ReadableStream<Uint8Array>({
+    pull(c) { pulled += 4096; c.enqueue(new Uint8Array(4096).fill(0x61)); },
+    cancel() { cancelled = true; },
+  });
+  const o = await withFetch(async () => new Response(endless, { status: 500 }),
+    () => sendTo(env, 'sub:x', sub, { title: 't', body: 'b' }));
+  assert.equal(o.result, 'fail');
+  assert.equal(o.status, 500);
+  assert.ok(o.detail!.length <= 200);
+  assert.ok(pulled <= 16 * 4096, `读了 ${pulled} 字节`);
+  assert.ok(cancelled, '读够了要把流关掉');
+});
+
+test('推送服务不回话：超时算失败，不拖住整轮', async () => {
+  const { env } = await envWithKV();
+  const hang = (_u: string, init?: RequestInit) => new Promise<Response>((_, reject) =>
+    init?.signal?.addEventListener('abort', () => reject(init.signal!.reason)));
+  const t0 = Date.now();
+  const o = await withFetch(hang, () => sendTo(env, 'sub:x', sub, { title: 't', body: 'b' }, 50));
+  assert.equal(o.result, 'fail');
+  assert.match(o.detail!, /秒没有回应/);
+  assert.ok(Date.now() - t0 < 5000);
+});
+
+test('投递从不抛异常：钥匙坏了也折成一次失败', async () => {
+  const kv = new FakeKV();
+  const o = await sendTo(envOf(kv, { PUSH_VAPID_PRIVATE_KEY: 'not-a-key', PUSH_VAPID_PUBLIC: 'x' }),
+    'sub:x', sub, { title: 't', body: 'b' });
+  assert.equal(o.result, 'fail');
+  assert.ok(o.detail);
 });

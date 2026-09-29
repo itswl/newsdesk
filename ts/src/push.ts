@@ -26,6 +26,13 @@ const ecdhWith = (pub: CryptoKey) =>
 
 /** 订阅上限。/push/subscribe 是公开端点，不设上限的话 KV 会被灌满 */
 export const MAX_SUBS = 20;
+/**
+ * 一次投递最多等多久。推送服务正常几百毫秒就回；endpoint 是任何人都能登记的，
+ * 一个故意不回话的端点不能拖住整轮定时任务。
+ */
+export const SEND_TIMEOUT_MS = 10_000;
+/** 投递失败时从正文里最多读多少字节找原因。整个读进来的话，回 500 加几百兆正文就能把 Worker 撑爆 */
+const DETAIL_BYTES = 1024;
 /** 单条记录大小。载荷远小于它，超了直接报错而不是悄悄截断 */
 const RECORD_SIZE = 4096;
 
@@ -149,30 +156,61 @@ export type SendResult = 'ok' | 'gone' | 'fail';
  */
 export interface SendOutcome { result: SendResult; status?: number; detail?: string }
 
-export async function sendTo(env: Env, key: string, sub: Sub, msg: Msg): Promise<SendOutcome> {
-  const pair = asPair(
-    await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']));
-  const body = await encrypt(enc.encode(JSON.stringify(msg)), b64uDecode(sub.p256dh),
-    b64uDecode(sub.auth), crypto.getRandomValues(new Uint8Array(16)), pair);
+export const errText = (e: unknown) => String(e instanceof Error ? e.message : e);
 
-  const res = await fetch(sub.endpoint, {
-    method: 'POST',
-    headers: {
-      'content-encoding': 'aes128gcm',
-      'content-type': 'application/octet-stream',
-      ttl: '86400',
-      urgency: 'normal',
-      authorization: await vapidAuth(env, sub.endpoint),
-    },
-    body,
-  });
-  // 404/410 = 这个订阅已经没了（应用被删、系统吊销）。不清掉的话它会永远失败
-  if (res.status === 404 || res.status === 410) {
-    await env.PUSH?.delete(key);
-    return { result: 'gone', status: res.status };
+/**
+ * 投递一条。**从不抛异常**：出了什么事都折成 fail 加原因返回——以前 HTTP 失败走返回值、
+ * 其余走异常，每个调用方都得自己再包一层 catch，两处写法还各不相同。
+ */
+export async function sendTo(env: Env, key: string, sub: Sub, msg: Msg,
+                             timeoutMs = SEND_TIMEOUT_MS): Promise<SendOutcome> {
+  try {
+    const pair = asPair(
+      await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']));
+    const body = await encrypt(enc.encode(JSON.stringify(msg)), b64uDecode(sub.p256dh),
+      b64uDecode(sub.auth), crypto.getRandomValues(new Uint8Array(16)), pair);
+
+    const res = await fetch(sub.endpoint, {
+      method: 'POST',
+      headers: {
+        'content-encoding': 'aes128gcm',
+        'content-type': 'application/octet-stream',
+        ttl: '86400',
+        urgency: 'normal',
+        authorization: await vapidAuth(env, sub.endpoint),
+      },
+      body,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    // 404/410 = 这个订阅已经没了（应用被删、系统吊销）。不清掉的话它会永远失败
+    if (res.status === 404 || res.status === 410) {
+      try { await env.PUSH?.delete(key); } catch { /* 删不掉下次还是 410，到时再删 */ }
+      return { result: 'gone', status: res.status };
+    }
+    if (res.ok) return { result: 'ok', status: res.status };
+    return { result: 'fail', status: res.status, detail: (await head(res, DETAIL_BYTES)).slice(0, 200) };
+  } catch (e) {
+    const timeout = (e as { name?: string } | null)?.name === 'TimeoutError';
+    return { result: 'fail', detail: timeout ? `${timeoutMs / 1000} 秒没有回应` : errText(e) };
   }
-  if (res.ok) return { result: 'ok', status: res.status };
-  return { result: 'fail', status: res.status, detail: (await res.text().catch(() => '')).slice(0, 200) };
+}
+
+/** 只读正文开头 n 字节，读到超时就用已经读到的 */
+async function head(res: Response, n: number): Promise<string> {
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const parts: Uint8Array[] = [];
+  let got = 0;
+  try {
+    while (got < n) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      got += value.length;
+    }
+  } catch { /* 超时或断流：有多少算多少 */ }
+  reader.cancel().catch(() => {});
+  return new TextDecoder().decode(cat(...parts).slice(0, n));
 }
 
 /**
@@ -183,33 +221,44 @@ export interface FanOut { subs: number; sent: number; gone: number; failed: numb
 
 export async function push(env: Env, msg: Msg): Promise<FanOut> {
   const out: FanOut = { subs: 0, sent: 0, gone: 0, failed: 0, errors: [] };
-  if (!env.PUSH || !env.PUSH_VAPID_PRIVATE_KEY || !env.PUSH_VAPID_PUBLIC) {
-    out.errors.push('推送未配置（缺 KV 绑定或 VAPID 钥匙）');
+  if (!env.PUSH) {
+    out.errors.push('推送未配置（缺 KV 绑定）');
     return out;
   }
+  // 先数订阅再看钥匙：subs 要如实反映「有没有人订」，否则缺钥匙会被读成没人订
   const subs = await listSubs(env);
   out.subs = subs.length;
-  for (const { key, sub } of subs) {
-    let o: SendOutcome;
-    try { o = await sendTo(env, key, sub, msg); } catch (e) {
-      o = { result: 'fail', detail: String(e instanceof Error ? e.message : e) };
-    }
-    if (o.result === 'ok') out.sent++;
-    else if (o.result === 'gone') out.gone++;
-    else {
-      out.failed++;
-      out.errors.push(`${hostOf(sub.endpoint)} ${o.status ?? '-'} ${o.detail ?? ''}`.trim());
-    }
+  if (!env.PUSH_VAPID_PRIVATE_KEY || !env.PUSH_VAPID_PUBLIC) {
+    out.errors.push('推送未配置（缺 VAPID 钥匙），一条都没发');
+    return out;
   }
+  for (const { key, sub } of subs) tally(out, sub.endpoint, await sendTo(env, key, sub, msg));
   return out;
+}
+
+/** 把一次投递的结果计进汇总。报告推送与欢迎推送共用，「失败」怎么描述只写在这一处 */
+function tally(out: FanOut, endpoint: string, o: SendOutcome): void {
+  if (o.result === 'ok') out.sent++;
+  else if (o.result === 'gone') out.gone++;
+  else {
+    out.failed++;
+    out.errors.push(`${hostOf(endpoint)} ${o.status ?? '-'} ${o.detail ?? ''}`.trim());
+  }
 }
 
 function hostOf(u: string): string {
   try { return new URL(u).host; } catch { return '?'; }
 }
 
-/** 最近几次推送的结果，存在 KV 里。拿现有的 KV 权限就能读，不必再给令牌开日志权限 */
+/**
+ * 最近几次推送的结果，存在 KV 里。拿现有的 KV 权限就能读，不必再给令牌开日志权限。
+ *
+ * 欢迎推送单独一个键：订阅是公开端点，谁都能反复提交，和定时推送共用一个键的话，
+ * 刷三十次订阅就能把四档简报的记录全挤掉——而那正是查「为什么没收到」要看的。
+ * 分开也免得订阅与定时任务在同一秒里写同一个键（KV 同一个键一秒只许写一次）。
+ */
 export const LOG_KEY = 'log:push';
+export const WELCOME_LOG_KEY = 'log:welcome';
 export const LOG_MAX = 30;
 
 export interface PushLogEntry extends FanOut {
@@ -220,20 +269,30 @@ export interface PushLogEntry extends FanOut {
 }
 
 /**
- * 记一次推送。
+ * 记几条推送结果，一次调用只写一次 KV。
  *
  * 为什么要有：09-29 豆瓣那档跑完，用户说没收到通知。KV 里能看到定时任务发现了
  * 豆瓣、调用了推送，但推送**结果**没有落在任何地方——是没有订阅、Apple 拒了、
  * 还是送达了但手机没弹，一样也分不出来，只能事后复现一次去猜。
  * 同时打一行 console.log，给开了 observability 的场合用。
+ *
+ * ⚠️ **从不抛异常**。日志是诊断用的，它写不进去（额度用完、同一秒写了两次）不能
+ * 拦住后面的事：以前它在推送循环里、基线写入之前，一抛就让基线停在原地，下一轮
+ * 把同样几档再推一遍，每 10 分钟一次。
  */
-export async function recordPush(env: Env, e: PushLogEntry): Promise<void> {
-  console.log(JSON.stringify({ push: 'newsdesk', ...e }));
-  if (!env.PUSH) return;
-  let log: PushLogEntry[] = [];
-  try { log = JSON.parse((await env.PUSH.get(LOG_KEY)) || '[]') as PushLogEntry[]; } catch { /* 坏了就重来 */ }
-  log.unshift(e);
-  await env.PUSH.put(LOG_KEY, JSON.stringify(log.slice(0, LOG_MAX)));
+export async function recordPush(env: Env, key: string, ...entries: PushLogEntry[]): Promise<void> {
+  for (const e of entries) console.log(JSON.stringify({ push: 'newsdesk', ...e }));
+  if (!env.PUSH || entries.length === 0) return;
+  try {
+    const raw = await env.PUSH.get(key); // 读失败就不写：别拿一份空的盖掉已有的记录
+    let prev: unknown = [];
+    try { prev = JSON.parse(raw || '[]'); } catch { /* 坏了就重来 */ }
+    // 合法 JSON 但不是数组（有人手动写了 null 或 {}）同样重来，不能在这里炸
+    const log = [...entries].reverse().concat(Array.isArray(prev) ? prev as PushLogEntry[] : []);
+    await env.PUSH.put(key, JSON.stringify(log.slice(0, LOG_MAX)));
+  } catch (e) {
+    console.log(JSON.stringify({ push: 'newsdesk', logWriteFailed: key, error: errText(e) }));
+  }
 }
 
 const json = (v: unknown, status = 200) =>
@@ -253,31 +312,37 @@ export async function route(request: Request, env: Env, url: URL): Promise<Respo
   if (url.pathname === '/push/unsubscribe') {
     const ep = (payload as { endpoint?: string })?.endpoint;
     if (typeof ep !== 'string') return json({ error: 'bad endpoint' }, 400);
-    await env.PUSH.delete(subKey(ep));
+    // 先读再删：谁都能调这个端点，拿随便编的 endpoint 刷的话，删除额度（一天 1000 次）
+    // 会被白白吃掉；读有十万次
+    const k = subKey(ep);
+    if (await env.PUSH.get(k)) await env.PUSH.delete(k);
     return json({ ok: true });
   }
 
   if (url.pathname !== '/push/subscribe') return json({ error: 'not found' }, 404);
+  // 缺钥匙时收下订阅也发不出去，页面却会显示「已开启」。直接拒，页面会说开启失败
+  if (!env.PUSH_VAPID_PRIVATE_KEY || !env.PUSH_VAPID_PUBLIC) return json({ error: 'push not configured' }, 503);
   if (!validSub(payload)) return json({ error: 'bad subscription' }, 400);
 
   const key = subKey(payload.endpoint);
+  // 只存校验过的三项。原样存请求体的话，夹带的任意字段也会进 KV，之后每次推送都要读一遍
+  const value = JSON.stringify({ endpoint: payload.endpoint, p256dh: payload.p256dh, auth: payload.auth });
   const existing = await env.PUSH.get(key);
   if (!existing && (await env.PUSH.list({ prefix: 'sub:' })).keys.length >= MAX_SUBS) {
     return json({ error: 'too many subscriptions' }, 429);
   }
-  await env.PUSH.put(key, JSON.stringify(payload));
+  // 同一份订阅重复提交就不再写一遍：公开端点，每次都写的话写额度会被刷光
+  if (existing !== value) await env.PUSH.put(key, value);
 
   // 立刻回推一条。既是欢迎语，也是唯一能在「点了开启」当场验证整条链路
   // （VAPID 签名、加密、投递、SW 弹窗）的办法——否则要等到下一档才知道通不通。
-  let o: SendOutcome = { result: 'fail' };
-  try {
-    o = await sendTo(env, key, payload, {
-      title: '通知已开启', body: '新简报出炉时会在这里提醒你。', url: '/', tag: 'newsdesk-welcome' });
-  } catch (e) { o = { result: 'fail', detail: String(e instanceof Error ? e.message : e) }; }
-  await recordPush(env, {
-    at: new Date().toISOString(), kind: 'welcome', subs: 1,
-    sent: o.result === 'ok' ? 1 : 0, gone: o.result === 'gone' ? 1 : 0, failed: o.result === 'fail' ? 1 : 0,
-    errors: o.result === 'fail' ? [`${hostOf(payload.endpoint)} ${o.status ?? '-'} ${o.detail ?? ''}`.trim()] : [],
-  });
+  // 到这里订阅已经存下了，后面不管出什么事都要回 ok：回错的话页面会说失败，
+  // 用户再点一次反倒走进了退订。
+  const o = await sendTo(env, key, payload, {
+    title: '通知已开启', body: '新简报出炉时会在这里提醒你。', url: '/', tag: 'newsdesk-welcome' });
+  // subs 在这里是「这次推给了几个订阅」：欢迎推送只推新订阅的这一个
+  const out: FanOut = { subs: 1, sent: 0, gone: 0, failed: 0, errors: [] };
+  tally(out, payload.endpoint, o);
+  await recordPush(env, WELCOME_LOG_KEY, { at: new Date().toISOString(), kind: 'welcome', ...out });
   return json({ ok: true, welcome: o.result });
 }
