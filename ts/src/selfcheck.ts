@@ -71,6 +71,8 @@ export function evaluate(text: string, nowMs: number, thresholdHours: number): V
  */
 export const RENOTIFY_HOURS = 6;
 const ALERTED_KEY = 'alerted:stale';
+/** wrangler.toml 里 cron 的间隔。只在节流状态存不进 KV 时用来退回按钟点节流 */
+const CRON_EVERY_MS = 10 * 60e3;
 
 /**
  * 停更自查。
@@ -111,15 +113,37 @@ export async function staleWatch(env: Env, got: { ok: boolean; status: number; t
   if (!verdict.bad) {
     // 恢复了就清掉节流，下次出事立刻响。先读再删：cron 每 10 分钟一次，无条件
     // delete 一天就是 144 次，而免费档 KV 的删除额度一天只有 1000 次（读有十万次）
-    if (env.PUSH && (await env.PUSH.get(ALERTED_KEY))) await env.PUSH.delete(ALERTED_KEY);
+    if (env.PUSH) {
+      try {
+        if (await env.PUSH.get(ALERTED_KEY)) await env.PUSH.delete(ALERTED_KEY);
+      } catch (e) {
+        console.log('停更节流清不掉，下次停更可能晚响一阵', e instanceof Error ? e.message : e);
+      }
+    }
     return;
   }
-  if (env.PUSH) {
-    const last = Number((await env.PUSH.get(ALERTED_KEY)) || 0);
-    if (last && nowMs - last < RENOTIFY_HOURS * 3.6e6) return;
-    await env.PUSH.put(ALERTED_KEY, String(nowMs));
-  }
+  if (env.PUSH && !(await claimAlert(env.PUSH, nowMs))) return;
   await notify(env, verdict.title!, verdict.body!);
+}
+
+/**
+ * 这一轮该不该发停更告警；该发就顺手记下时刻。
+ *
+ * ⚠️ KV 读写失败（比如当天写额度用完）时绝不能因此把告警吞掉——以前先写节流、
+ * 写失败就抛，停更告警一条都发不出去。也不能退成每 10 分钟一条，于是退回按钟点
+ * 节流：每 RENOTIFY_HOURS 的头一个 cron 间隔里才发。
+ */
+async function claimAlert(kv: KVNamespace, nowMs: number): Promise<boolean> {
+  const every = RENOTIFY_HOURS * 3.6e6;
+  try {
+    const last = Number(await kv.get(ALERTED_KEY)) || 0;
+    if (last && nowMs - last < every) return false;
+    await kv.put(ALERTED_KEY, String(nowMs));
+    return true;
+  } catch (e) {
+    console.log('停更节流读写失败，改按钟点节流', e instanceof Error ? e.message : e);
+    return nowMs % every < CRON_EVERY_MS;
+  }
 }
 
 /** 自己取一次再自查。给不经 cron 的调用方用（cron 走 cron.ts，只取一次喂两条线）。 */
