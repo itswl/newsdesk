@@ -71,6 +71,33 @@ func TestDuplicateKeyIsAnError(t *testing.T) {
 	}
 }
 
+// 少了 = 的行多半是贴错地方的凭据。这条报错会写进调度器日志、发到告警群里，
+// 所以只能报到第几行，不能把这一行带出去。
+func TestMalformedLineIsNotEchoed(t *testing.T) {
+	const secret = "sk-ant-EXAMPLE0123456789"
+	_, err := Load(write(t, "ENGINE=claude\nFALLBACK_AUTH_TOKEN: "+secret+"\n"))
+	if err == nil {
+		t.Fatal("缺 = 的行应当报错")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Errorf("报错把这一行的内容带出来了：%v", err)
+	}
+	if !strings.Contains(err.Error(), ":2 ") {
+		t.Errorf("要报出是第几行：%v", err)
+	}
+}
+
+func TestEqualComparesValuesNotPath(t *testing.T) {
+	a := load(t, "ENGINE=claude\n")
+	b := load(t, "# 加了一行注释\nENGINE=claude   # 行尾也有\n")
+	if !a.Equal(b) {
+		t.Error("只差注释与空白，键值相同，应当相等")
+	}
+	if a.Equal(load(t, "ENGINE=codex\n")) {
+		t.Error("值不同不该相等")
+	}
+}
+
 func TestMissingFileIsNotAnError(t *testing.T) {
 	// 只在本机看简报时整个配置都是可选的，不该因此拒绝启动
 	c, err := Load(filepath.Join(t.TempDir(), "nope.conf"))

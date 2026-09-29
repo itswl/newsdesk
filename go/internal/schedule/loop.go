@@ -2,7 +2,10 @@ package schedule
 
 import (
 	"context"
+	"crypto/sha256"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,36 +26,39 @@ type Loop struct {
 	Root, Home string
 	Cfg        *config.Config
 	Tick       time.Duration
-	notifier   *notify.Notifier
+	// Version 这个进程的构建版本，写进 health.json。status 拿它和磁盘上的二进制比：
+	// 重新编译之后没重启，调度器会一直跑旧代码，而各处日志照常显示「完成」。
+	Version    string
 	statePath  string
 	healthPath string
-	auditAt    string   // 日终核对时刻 HH:MM
 	sched      []string // 时间表文案，写进 health.json
 
-	cfgPath  string    // 空 = 不监视配置文件（测试、一次性命令）
-	cfgMtime time.Time // 上次看到的修改时刻；读坏了也记，免得同一份坏文件每 30 秒告警一次
+	watch cfgWatch
+	// 有一档是按旧配置发布的（跑的途中配置文件改过），新配置生效时要重发一次，见 runOne
+	republish bool
+}
+
+// cfgWatch 配置文件的监视状态。
+//
+// 比的是内容，不是修改时刻：这台机器的 HFS+ 时间戳只精确到秒，同一秒里的两次
+// 保存修改时刻相同，后一次会被当成已经看过而永远不生效。比内容也顺带免掉了
+// 「stat 过再去读，两步之间文件又变了」这一类竞态——解析的就是比过的那份字节。
+type cfgWatch struct {
+	path    string   // 空 = 不监视（测试、一次性命令）
+	applied [32]byte // 手上这份配置对应的文件内容摘要；零值 = 对不上号，下一轮当改动处理
+	pending [32]byte // 上一轮读到的新内容，连续两轮一样才处理——编辑器可能正写到一半
+	bad     [32]byte // 解析失败的那份内容，同一份只告警一次
+	readErr string   // 读不了文件时的错误，同一个错误只报一次
 }
 
 func NewLoop(root, home string, cfg *config.Config) *Loop {
 	st := store.New(root)
-	l := &Loop{
-		Root: root, Home: home,
+	return &Loop{
+		Root: root, Home: home, Cfg: cfg,
 		Tick:       30 * time.Second,
 		statePath:  st.State("schedule.json"),
 		healthPath: st.State("health.json"),
 	}
-	l.applyConfig(cfg)
-	return l
-}
-
-// applyConfig 把配置和所有从它派生出来的东西一起换掉。
-//
-// 只换 Cfg 不够：告警通道与日终核对时刻是构造时从配置里取出来缓存的，
-// 漏了它们的话改了 ALERT_WEBHOOK，告警照样发往旧地址。
-func (l *Loop) applyConfig(cfg *config.Config) {
-	l.Cfg = cfg
-	l.notifier = notify.New(cfg.Get("ALERT_WEBHOOK", ""), cfg.Get("ALERT_PAYLOAD", ""))
-	l.auditAt = cfg.Get("AUDIT_AT", "23:30")
 }
 
 // WatchConfig 让调度器在配置文件改动后自己重读，不用重启。
@@ -61,53 +67,155 @@ func (l *Loop) applyConfig(cfg *config.Config) {
 // config.conf、手动 publish 之后线上出现了通知开关；但调度器是半夜启动的，
 // 当天中午那一档重建站点时用的还是旧配置，生成的页面没有开关，还把手动发布
 // 的那版覆盖掉了。「改了配置」和「生效了」之间差一次重启，而这一步谁都会忘。
+//
+// 调用方读配置在前、这里读在后。两步之间要是落下一次保存，内容就对不上号，
+// 那就不记——下一轮会把它当成改动读进来。只记一个修改时刻的话，那次保存会被
+// 当成已经看过，永远不生效。
 func (l *Loop) WatchConfig(path string) {
-	l.cfgPath = path
-	if fi, err := os.Stat(path); err == nil {
-		l.cfgMtime = fi.ModTime()
+	l.watch = cfgWatch{path: path}
+	if raw, err := os.ReadFile(path); err == nil {
+		if cfg, err := config.Parse(path, raw); err == nil && cfg.Equal(l.Cfg) {
+			l.watch.applied = sha256.Sum256(raw)
+		}
 	}
 }
 
-// reloadConfig 配置文件的修改时刻变了就重读。
+// reloadConfig 配置文件的内容变了、而且写稳了，就换上新的。
 //
-// 每轮 tick 都会调，代价是一次 stat。正在跑的那一档不受影响——它拿着开跑时
-// 的那份配置跑完，改动从下一轮起生效，不会半途换引擎。
+// 每轮 tick 都会调，代价是读一个几 KB 的文件。正在跑的那一档不受影响——它拿着
+// 开跑时的那份配置跑完，改动从下一轮起生效，不会半途换引擎。
 //
-// ⚠️ 读坏了（比如写出重复键）**沿用旧配置**，告警一次，不中断调度：一个编辑到
-// 一半的配置文件不该让当天剩下的几档全部停摆。修改时刻照样记下，同一份坏文件
-// 不会每 30 秒告警一次；再改一次就会重新尝试。
+// 新内容要连续两轮读到一样才处理。编辑器保存可能是「先清空再写」，正好读在
+// 中间就会拿到空的或半截的配置——而空配置是合法的（等于「只在本机看简报」），
+// 换上去的话告警通道、发布、英文站会一起悄悄消失。
+//
+// ⚠️ 读坏了**沿用旧配置**，告警一次，不中断调度：一个编辑到一半的配置文件不该
+// 让当天剩下的几档全部停摆。同一份坏内容只告警一次，再改一次就会重新尝试。
+// 文件读不了（被删、没权限）也一样：沿用旧配置，同一个错误只报一次。
 func (l *Loop) reloadConfig() (changed bool, err error) {
-	if l.cfgPath == "" {
+	w := &l.watch
+	if w.path == "" {
 		return false, nil
 	}
-	fi, err := os.Stat(l.cfgPath)
-	if err != nil || fi.ModTime().Equal(l.cfgMtime) {
-		return false, nil // 暂时读不到就等下一轮，别为一次 stat 失败告警
-	}
-	l.cfgMtime = fi.ModTime()
-
-	cfg, err := config.Load(l.cfgPath)
+	name := filepath.Base(w.path)
+	raw, err := os.ReadFile(w.path)
 	if err != nil {
-		l.logf("!! 配置文件改动后读不出来，沿用上一份：%v", err)
-		l.alert("newsdesk 配置文件有误", fmt.Sprintf(
-			"config.conf 改动后解析失败，调度器沿用上一份配置继续运行：\n%v\n修好后会自动重新读取，不用重启。", err))
+		// 从一开始就没有这个文件，是「只在本机看简报」的正常形态，不必声张
+		if errors.Is(err, fs.ErrNotExist) && w.applied == ([32]byte{}) {
+			return false, nil
+		}
+		if msg := err.Error(); msg != w.readErr {
+			w.readErr = msg
+			l.logf("!! 读不了 %s，沿用上一份配置：%v", name, err)
+			l.alert("newsdesk 读不了配置文件", fmt.Sprintf(
+				"%v\n调度器沿用上一份配置继续运行，文件恢复后会自动重新读取。"+
+					"如果是有意删掉、想按「没有配置」运行，要重启调度器。", err))
+		}
 		return false, err
 	}
-	before := engine.PlanLine(l.Cfg)
-	l.applyConfig(cfg)
-	l.logf("配置已重新读取（config.conf 修改于 %s），下一档起生效", fi.ModTime().Format("15:04:05"))
+	if w.readErr != "" {
+		w.readErr = ""
+		l.logf("%s 又能读了", name)
+	}
+
+	sum := sha256.Sum256(raw)
+	switch sum {
+	case w.applied:
+		// 和手上这份一样（没改，或改了又改回来）。按旧配置发布的那一档也就不欠什么了
+		w.pending, l.republish = [32]byte{}, false
+		return false, nil
+	case w.bad:
+		w.pending = [32]byte{}
+		return false, nil
+	case w.pending:
+		w.pending = [32]byte{} // 连续两轮一样：写完了，往下处理
+	default:
+		w.pending = sum // 刚变，等下一轮确认已经写完
+		return false, nil
+	}
+
+	cfg, err := config.Parse(w.path, raw)
+	if err != nil {
+		w.bad = sum
+		// 报错里只有文件名、行号和键名，不含值（config.Parse 保证），可以发出去
+		l.logf("!! %s 改动后读不出来，沿用上一份：%v", name, err)
+		l.alert("newsdesk 配置文件有误", fmt.Sprintf(
+			"%s 改动后解析失败，调度器沿用上一份配置继续运行：\n%v\n修好后会自动重新读取，不用重启。", name, err))
+		return false, err
+	}
+	w.applied, w.bad = sum, [32]byte{}
+	if cfg.Equal(l.Cfg) {
+		// 内容变了、值没变：加了注释、调了空白，或者是刚启动时对不上号的那次核对
+		l.republish = false
+		return false, nil
+	}
+	before, beforeAudit := engine.PlanLine(l.Cfg), l.auditTime()
+	l.Cfg = cfg
+	l.logf("配置已重新读取（%s），下一档起生效", name)
 	// 引擎变了要说出来：报告是谁写的必须看得见
 	if after := engine.PlanLine(cfg); after != before {
 		l.logf("%s", after)
 	}
+	if after := l.auditTime(); after != beforeAudit {
+		l.logf("日终核对：%s", after)
+	}
 	return true, nil
 }
 
+// configMoved 配置文件里现在的值是否已经和手上这份不同。读坏了也算：修好之后要按新的来。
+func (l *Loop) configMoved() bool {
+	if l.watch.path == "" {
+		return false
+	}
+	raw, err := os.ReadFile(l.watch.path)
+	if err != nil {
+		return false
+	}
+	cfg, err := config.Parse(l.watch.path, raw)
+	return err != nil || !cfg.Equal(l.Cfg)
+}
+
+// republishSite 按现在的配置重建站点、自检、发布，不调模型——和手动 newsdesk publish 一样。
+func (l *Loop) republishSite(ctx context.Context) {
+	l.logf("按新配置重新发布站点（上一档是按旧配置发布的）")
+	start := time.Now()
+	err := pipeline.Republish(ctx, l.Root, l.Cfg, false, prefixWriter{prefix: "[重新发布] "})
+	switch {
+	case ctx.Err() != nil:
+		l.logf("重新发布被退出信号中断")
+	case err != nil:
+		l.logf("!! 重新发布失败：%v", err)
+		l.alert("newsdesk 按新配置重新发布失败", fmt.Sprintf(
+			"配置改动后重新发布站点失败，线上停在旧配置上，下一档会再发一次：\n%v", err))
+	default:
+		l.logf("重新发布完成，用时 %s", time.Since(start).Round(time.Second))
+	}
+}
+
+// auditTime 日终核对时刻 HH:MM。
+//
+// 核对是按字符串比时刻的，所以要规整成两位小时：「9:30」原样拿去比的话任何时刻
+// 都小于它，核对再也不会触发，也不报错。写得认不出来就退回默认值。
+func (l *Loop) auditTime() string {
+	t, err := time.Parse("15:04", l.Cfg.Get("AUDIT_AT", "23:30"))
+	if err != nil {
+		return "23:30"
+	}
+	return t.Format("15:04")
+}
+
 func (l *Loop) alert(title, text string) {
-	if err := l.notifier.Send(title, text); err != nil {
+	// 告警通道每次从当前配置现取。缓存一份的话，热重读时得记得一起换——漏换不报错，
+	// 告警照样发往旧地址
+	n := notify.New(l.Cfg.Get("ALERT_WEBHOOK", ""), l.Cfg.Get("ALERT_PAYLOAD", ""))
+	if err := n.Send(title, text); err != nil {
 		// 告警通道本身坏了是要知道的，但不能因此让调度停下来
 		l.logf("!! 告警发送失败：%v", err)
 	}
+}
+
+func (l *Loop) health(st *State, run *Running) error {
+	return WriteHealth(l.healthPath, st, l.sched, run, l.Version)
 }
 
 func (l *Loop) logf(f string, a ...any) {
@@ -135,10 +243,10 @@ func (l *Loop) Run(ctx context.Context) error {
 		sched = append(sched, t.At+" "+t.Key)
 	}
 	l.sched = sched
-	l.logf("调度器启动，pid %d", os.Getpid())
+	l.logf("调度器启动，pid %d，构建 %s", os.Getpid(), l.Version)
 	l.logf("时间表：%s", strings.Join(sched, " | "))
 	l.logf("%s", engine.PlanLine(l.Cfg))
-	l.logf("日终核对：%s", l.auditAt)
+	l.logf("日终核对：%s", l.auditTime())
 
 	st, err := Load(l.statePath)
 	if err != nil {
@@ -147,14 +255,14 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.logf("!! %v", err)
 		l.alert("newsdesk 调度状态异常", err.Error()+"\n已按空状态继续，今天的任务可能重跑。")
 	}
-	_ = WriteHealth(l.healthPath, st, sched, nil)
+	_ = l.health(st, nil)
 
 	tk := time.NewTicker(l.Tick)
 	defer tk.Stop()
 	consecutiveErr := 0
 
 	for {
-		if err := l.tick(ctx, st, sched); err != nil {
+		if err := l.tick(ctx, st); err != nil {
 			consecutiveErr++
 			l.logf("!! 循环异常（连续 %d 次）：%v", consecutiveErr, err)
 			// 单次异常可能只是磁盘忙。连续失败说明调度本身坏了，
@@ -175,8 +283,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	}
 }
 
-func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
-	_, _ = l.reloadConfig() // 出错已在里面告警并沿用旧配置，这里不必再管
+func (l *Loop) tick(ctx context.Context, st *State) error {
+	// 出错已在里面告警并沿用旧配置，这里不必再管
+	if changed, _ := l.reloadConfig(); changed && l.republish {
+		l.republish = false
+		l.republishSite(ctx)
+	}
 	now := time.Now()
 	for _, t := range task.All {
 		// 先跟产出对一次账。手动跑过的档在调度状态里没有记录，被中断过的档
@@ -184,7 +296,7 @@ func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
 		// 一遍，白烧一次模型调用还覆盖掉好的产出。
 		// 日终核对本来就以产出为准，判定这边不看就是两套标准。
 		if l.reconcile(t, now, st) {
-			_ = WriteHealth(l.healthPath, st, sched, nil)
+			_ = l.health(st, nil)
 			continue
 		}
 		d := Decide(t, now, st.Tasks[t.Key])
@@ -203,10 +315,10 @@ func (l *Loop) tick(ctx context.Context, st *State, sched []string) error {
 			l.logf("[%s] %s，开始", t.Key, d.Reason)
 			l.runOne(ctx, t, d, st, now)
 		}
-		_ = WriteHealth(l.healthPath, st, sched, nil)
+		_ = l.health(st, nil)
 	}
 	l.audit(st, now)
-	return WriteHealth(l.healthPath, st, sched, nil)
+	return l.health(st, nil)
 }
 
 // reconcile 用产出校正调度状态，返回 true 表示这一档已经有今天的报告、不必再跑。
@@ -278,6 +390,13 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 	if err == nil {
 		l.logf("[%s] 完成，用时 %s，%s", t.Key,
 			res.Duration.Round(time.Second), engine.Describe(l.Cfg, res.Engine))
+		// 跑的途中配置文件改过：这一档是按开跑时那份配置建站发布的，期间要是按新配置
+		// 手动发布过，已经被它覆盖（09-29 丢通知开关就是这个形状）。新配置生效时重发一次。
+		if l.configMoved() {
+			l.republish = true
+			l.logf("[%s] 跑的途中 %s 改过，这一档是按旧配置发布的；新配置生效后会按它重新发布一次",
+				t.Key, filepath.Base(l.watch.path))
+		}
 		return
 	}
 	l.logf("[%s] 失败（第 %d 次）：%v", t.Key, next.Attempts, err)
@@ -303,7 +422,7 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 // status.json 被外部监控轮询。两条线各管一半，都要有。
 func (l *Loop) audit(st *State, now time.Time) {
 	day := now.Format("2006-01-02")
-	if st.Audit == day || now.Format("15:04") < l.auditAt {
+	if st.Audit == day || now.Format("15:04") < l.auditTime() {
 		return
 	}
 	st.Audit = day
@@ -371,7 +490,7 @@ func (w prefixWriter) Write(b []byte) (int, error) {
 // 返回的 stop 会等 goroutine 退出后才返回——调用方接着要改 st，而 goroutine 在读它。
 func (l *Loop) heartbeatWhile(st *State, key string, every time.Duration) (stop func()) {
 	run := &Running{Key: key, Since: time.Now()}
-	_ = WriteHealth(l.healthPath, st, l.sched, run)
+	_ = l.health(st, run)
 	done := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -384,7 +503,7 @@ func (l *Loop) heartbeatWhile(st *State, key string, every time.Duration) (stop 
 			case <-done:
 				return
 			case <-tk.C:
-				_ = WriteHealth(l.healthPath, st, l.sched, run)
+				_ = l.health(st, run)
 			}
 		}
 	}()

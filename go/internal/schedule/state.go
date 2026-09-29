@@ -92,6 +92,9 @@ type Health struct {
 	// pipeline 里；没有这两项，status 分不清「还没跑」和「跑到一半」。
 	Running      string `json:"running,omitempty"`
 	RunningSince string `json:"running_since,omitempty"`
+	// 调度器进程的构建版本。重新编译之后不重启，它会一直跑旧代码；status 拿这一项
+	// 和自己的版本比，对不上就提醒重启。
+	Version string `json:"version,omitempty"`
 }
 
 // Running 正在执行的任务。nil 表示空闲。
@@ -107,11 +110,11 @@ type Running struct {
 // 变陈旧，才是唯一能覆盖「整机不在」的办法。
 //
 // ⚠️ 时间戳带时区并另给 epoch：消费者是跑在 UTC 里的 Worker。
-func WriteHealth(path string, s *State, sched []string, run *Running) error {
+func WriteHealth(path string, s *State, sched []string, run *Running, version string) error {
 	now := time.Now()
 	h := Health{
 		Heartbeat: now.Format(time.RFC3339), HeartbeatEpoch: now.Unix(),
-		PID: os.Getpid(), Schedule: sched, Tasks: map[string]string{},
+		PID: os.Getpid(), Schedule: sched, Tasks: map[string]string{}, Version: version,
 	}
 	if run != nil {
 		h.Running, h.RunningSince = run.Key, run.Since.Format(time.RFC3339)
