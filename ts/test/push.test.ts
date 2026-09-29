@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { hkdfSync } from 'node:crypto';
-import { b64uDecode, b64uEncode, encrypt, LOG_KEY, LOG_MAX, MAX_SUBS, push, recordPush, route, sendTo, validSub, vapidAuth, WELCOME_LOG_KEY } from '../src/push.ts';
+import { b64uDecode, b64uEncode, encrypt, LOG_KEY, LOG_MAX, MAX_SUBS, PUBLIC_WRITES_PER_DAY, push, recordPush, route, sendTo, takeBudget, validSub, vapidAuth } from '../src/push.ts';
 import type { PushLogEntry } from '../src/push.ts';
 import type { Env } from '../src/env.ts';
 import { envOf, FakeKV, subBody, vapidEnv, withFetch } from './fixtures.ts';
@@ -214,7 +214,7 @@ test('没配 KV 时整条推送静默关闭而不是报错', async () => {
   assert.equal(res.status, 503);
 });
 
-const logOf = (kv: FakeKV, key = LOG_KEY) => JSON.parse(kv.m.get(key) || '[]') as PushLogEntry[];
+const logOf = (kv: FakeKV) => JSON.parse(kv.m.get(LOG_KEY) || '[]') as PushLogEntry[];
 
 // 失败时要把推送服务给的原因带回来。只留一个状态码的话，「为什么没收到」
 // 永远只能回答「失败了」，而 Apple 其实写明了是哪一种（BadJwtToken、BadDeviceToken…）
@@ -265,23 +265,67 @@ test('推送没配置时要说出来，不是安静地返回全零', async () =>
   assert.match(out.errors[0]!, /未配置/);
 });
 
-test('订阅时的欢迎推送也记进日志', async () => {
+// 订阅是公开端点。欢迎推送每次都记进 KV 的话，刷订阅就等于刷 KV 写入额度；
+// 它的结果本来就当场回给了页面
+test('欢迎推送的结果回给页面，不写进 KV', async () => {
   const { env, kv } = await envWithKV();
-  const orig = globalThis.fetch;
-  globalThis.fetch = (async () => new Response(null, { status: 201 })) as typeof fetch;
-  try { await call(env, '/push/subscribe', subBody('https://web.push.apple.com/c')); }
-  finally { globalThis.fetch = orig; }
-  assert.equal(kv.m.has(LOG_KEY), false, '欢迎推送不进定时推送的日志，免得刷订阅就能把它挤掉');
-  const log = logOf(kv, WELCOME_LOG_KEY);
-  assert.equal(log.length, 1);
-  assert.equal(log[0]!.kind, 'welcome');
-  assert.equal(log[0]!.sent, 1);
+  const res = await withFetch(async () => new Response(null, { status: 201 }),
+    () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/c')));
+  assert.deepEqual(await res.json(), { ok: true, welcome: 'ok' });
+  assert.equal(kv.m.has(LOG_KEY), false);
+  assert.deepEqual([...kv.putsBy.keys()].map(k => k.split(':')[0]).sort(), ['budget', 'sub'],
+    '只写订阅本身和当天的额度计数');
+});
+
+// Apple 把原因写在正文里。它不进任何日志，回给页面是唯一能看到它的地方
+test('欢迎推送失败时把推送服务给的原因回给页面', async () => {
+  const { env } = await envWithKV();
+  const res = await withFetch(async () => new Response('{"reason":"BadJwtToken"}', { status: 403 }),
+    () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/jwt')));
+  const body = await res.json() as { ok: boolean; welcome: string; detail?: string };
+  assert.equal(body.welcome, 'fail');
+  assert.match(body.detail!, /^403 .*BadJwtToken/);
+});
+
+// 以前一直「订阅、退订、再订阅」几个小时就能把整个账号的 KV 写额度耗光，
+// 之后当天的新简报基线、停更节流都写不进去
+test('公开写入有日额度：用完之后新订阅一律 429，也不再去数订阅', async () => {
+  const { env, kv } = await envWithKV();
+  const ok = async () => new Response(null, { status: 201 });
+  await withFetch(ok, () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/mine')));
+  for (let i = 1; i < PUBLIC_WRITES_PER_DAY; i++) assert.ok(await takeBudget(kv as unknown as KVNamespace));
+  const lists = kv.lists;
+  const res = await withFetch(ok, () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/one-more')));
+  assert.equal(res.status, 429);
+  assert.equal(kv.lists, lists, 'list 也有每天 1000 次的额度，额度用完就别再数');
+  assert.equal(kv.subs().length, 1);
+  // 已经存着、原样再提交的订阅不写 KV，也就不占额度，照样放行
+  const again = await withFetch(ok, () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/mine')));
+  assert.equal(again.status, 200);
+});
+
+test('额度按 UTC 日算，计数带过期时间，第二天自己消失', async () => {
+  const kv = new FakeKV();
+  const day1 = Date.parse('2026-09-30T23:00:00Z'), day2 = Date.parse('2026-10-01T00:10:00Z');
+  for (let i = 0; i < PUBLIC_WRITES_PER_DAY; i++) assert.ok(await takeBudget(kv as unknown as KVNamespace, day1));
+  assert.equal(await takeBudget(kv as unknown as KVNamespace, day1), false);
+  assert.equal(await takeBudget(kv as unknown as KVNamespace, day2), true, '新的一天重新计');
+  assert.ok(kv.optsBy.get('budget:2026-09-30')?.expirationTtl, '不带过期时间的话要另花删除额度去清');
+});
+
+test('额度计数写不进去，就当没有额度：不收订阅', async () => {
+  const { env, kv } = await envWithKV();
+  kv.fail = (op, k) => op === 'put' && k.startsWith('budget:');
+  const res = await withFetch(async () => new Response(null, { status: 201 }),
+    () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/nobudget')));
+  assert.equal(res.status, 429);
+  assert.equal(kv.subs().length, 0);
 });
 
 test('推送日志只留最近几条，新的在前', async () => {
   const { env, kv } = await envWithKV();
   for (let i = 0; i < LOG_MAX + 5; i++) {
-    await recordPush(env, LOG_KEY, { at: String(i), kind: 'report', task: 'ai', subs: 1, sent: 1, gone: 0, failed: 0, errors: [] });
+    await recordPush(env, { at: String(i), kind: 'report', task: 'ai', subs: 1, sent: 1, gone: 0, failed: 0, errors: [] });
   }
   const log = logOf(kv);
   assert.equal(log.length, LOG_MAX, '要有上限，否则一个值会无限长大');
@@ -294,7 +338,7 @@ const entry = (at: string): PushLogEntry =>
 test('一次记几条只写一次 KV，新的在前', async () => {
   const { env, kv } = await envWithKV();
   kv.sameKeyMs = 1000; // 真 KV：同一个键一秒只许写一次
-  await recordPush(env, LOG_KEY, entry('1'), entry('2'));
+  await recordPush(env, entry('1'), entry('2'));
   assert.equal(kv.putsBy.get(LOG_KEY), 1);
   assert.deepEqual(logOf(kv).map(e => e.at), ['2', '1']);
 });
@@ -303,9 +347,9 @@ test('一次记几条只写一次 KV，新的在前', async () => {
 test('日志写不进去也不抛', async () => {
   const { env, kv } = await envWithKV();
   kv.fail = op => op === 'put';
-  await recordPush(env, LOG_KEY, entry('1'));
+  await recordPush(env, entry('1'));
   kv.fail = op => op === 'get';
-  await recordPush(env, LOG_KEY, entry('2'));
+  await recordPush(env, entry('2'));
 });
 
 // 有人照着文档用 wrangler 查日志时顺手写了个 null 进去：以前从那以后每一次记录都抛
@@ -313,30 +357,18 @@ test('日志里存着合法 JSON 但不是数组，也能接着记', async () =>
   for (const junk of ['null', '{}', '"x"', '7']) {
     const { env, kv } = await envWithKV();
     kv.m.set(LOG_KEY, junk);
-    await recordPush(env, LOG_KEY, entry('1'));
+    await recordPush(env, entry('1'));
     assert.deepEqual(logOf(kv).map(e => e.at), ['1'], `存着 ${junk} 时`);
   }
 });
 
 test('读日志失败就不写，不拿一份空的盖掉已有记录', async () => {
   const { env, kv } = await envWithKV();
-  await recordPush(env, LOG_KEY, entry('old'));
+  await recordPush(env, entry('old'));
   kv.fail = op => op === 'get';
-  await recordPush(env, LOG_KEY, entry('new'));
+  await recordPush(env, entry('new'));
   kv.fail = undefined;
   assert.deepEqual(logOf(kv).map(e => e.at), ['old']);
-});
-
-// 订阅已经存下、欢迎推送也送到了，日志写不进去不能让页面说「开启失败」——
-// 用户再点一次就走进了退订
-test('欢迎推送的日志写不进去，订阅照样回 ok', async () => {
-  const { env, kv } = await envWithKV();
-  kv.fail = (op, k) => op === 'put' && k === WELCOME_LOG_KEY;
-  const res = await withFetch(async () => new Response(null, { status: 201 }),
-    () => call(env, '/push/subscribe', subBody('https://web.push.apple.com/logfail')));
-  assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { ok: true, welcome: 'ok' });
-  assert.equal(kv.subs().length, 1);
 });
 
 // 缺钥匙时 subs 以前报 0，照文档「subs 为 0 就是没人订」去查，查的是错的方向

@@ -251,25 +251,52 @@ function hostOf(u: string): string {
 }
 
 /**
- * 最近几次推送的结果，存在 KV 里。拿现有的 KV 权限就能读，不必再给令牌开日志权限。
+ * 最近几次定时推送的结果，存在 KV 里。拿现有的 KV 权限就能读，不必再给令牌开日志权限。
  *
- * 欢迎推送单独一个键：订阅是公开端点，谁都能反复提交，和定时推送共用一个键的话，
- * 刷三十次订阅就能把四档简报的记录全挤掉——而那正是查「为什么没收到」要看的。
- * 分开也免得订阅与定时任务在同一秒里写同一个键（KV 同一个键一秒只许写一次）。
+ * 只记四档简报的推送。订阅时的欢迎推送不记：它的结果当场就回给了页面（失败时连原因
+ * 一起显示），而订阅是谁都能调的公开端点——每次都记一笔的话，刷订阅就等于刷 KV 写入。
  */
 export const LOG_KEY = 'log:push';
-export const WELCOME_LOG_KEY = 'log:welcome';
 export const LOG_MAX = 30;
+
+/**
+ * 公开端点每天最多替人写几次 KV。
+ *
+ * KV 免费档一天 1000 次写入、1000 次 list，整个账号共用。/push/subscribe 谁都能调，
+ * 不设上限的话一直「订阅、退订、再订阅」几个小时就能把额度耗光，之后当天的新简报
+ * 基线、停更节流都写不进去。正常使用一天也就订阅一两次。
+ */
+export const PUBLIC_WRITES_PER_DAY = 50;
+const budgetKey = (nowMs: number) => 'budget:' + new Date(nowMs).toISOString().slice(0, 10);
+
+/**
+ * 从当天的公开写入额度里取一次。额度按 UTC 日算，与 KV 自己的日额度同一天重置。
+ *
+ * 计数本身也是一次写入，带过期时间，第二天自己消失，不另花删除额度。并发时会少计
+ * 一两次，不要紧：要防的是一天几百上千次，不是精确记账。计数写不进去（同一个键
+ * 一秒只许写一次、额度已尽）一律按「没有额度」处理。
+ */
+export async function takeBudget(kv: KVNamespace, nowMs = Date.now()): Promise<boolean> {
+  const k = budgetKey(nowMs);
+  try {
+    const used = Number(await kv.get(k)) || 0;
+    if (used >= PUBLIC_WRITES_PER_DAY) return false;
+    await kv.put(k, String(used + 1), { expirationTtl: 2 * 86400 });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export interface PushLogEntry extends FanOut {
   at: string;
-  kind: 'report' | 'welcome';
+  kind: 'report';
   task?: string;
   date?: string;
 }
 
 /**
- * 记几条推送结果，一次调用只写一次 KV。
+ * 记几条定时推送的结果，一次调用只写一次 KV。
  *
  * 为什么要有：09-29 豆瓣那档跑完，用户说没收到通知。KV 里能看到定时任务发现了
  * 豆瓣、调用了推送，但推送**结果**没有落在任何地方——是没有订阅、Apple 拒了、
@@ -280,18 +307,18 @@ export interface PushLogEntry extends FanOut {
  * 拦住后面的事：以前它在推送循环里、基线写入之前，一抛就让基线停在原地，下一轮
  * 把同样几档再推一遍，每 10 分钟一次。
  */
-export async function recordPush(env: Env, key: string, ...entries: PushLogEntry[]): Promise<void> {
+export async function recordPush(env: Env, ...entries: PushLogEntry[]): Promise<void> {
   for (const e of entries) console.log(JSON.stringify({ push: 'newsdesk', ...e }));
   if (!env.PUSH || entries.length === 0) return;
   try {
-    const raw = await env.PUSH.get(key); // 读失败就不写：别拿一份空的盖掉已有的记录
+    const raw = await env.PUSH.get(LOG_KEY); // 读失败就不写：别拿一份空的盖掉已有的记录
     let prev: unknown = [];
     try { prev = JSON.parse(raw || '[]'); } catch { /* 坏了就重来 */ }
     // 合法 JSON 但不是数组（有人手动写了 null 或 {}）同样重来，不能在这里炸
     const log = [...entries].reverse().concat(Array.isArray(prev) ? prev as PushLogEntry[] : []);
-    await env.PUSH.put(key, JSON.stringify(log.slice(0, LOG_MAX)));
+    await env.PUSH.put(LOG_KEY, JSON.stringify(log.slice(0, LOG_MAX)));
   } catch (e) {
-    console.log(JSON.stringify({ push: 'newsdesk', logWriteFailed: key, error: errText(e) }));
+    console.log(JSON.stringify({ push: 'newsdesk', logWriteFailed: LOG_KEY, error: errText(e) }));
   }
 }
 
@@ -328,11 +355,15 @@ export async function route(request: Request, env: Env, url: URL): Promise<Respo
   // 只存校验过的三项。原样存请求体的话，夹带的任意字段也会进 KV，之后每次推送都要读一遍
   const value = JSON.stringify({ endpoint: payload.endpoint, p256dh: payload.p256dh, auth: payload.auth });
   const existing = await env.PUSH.get(key);
-  if (!existing && (await env.PUSH.list({ prefix: 'sub:' })).keys.length >= MAX_SUBS) {
-    return json({ error: 'too many subscriptions' }, 429);
+  // 同一份订阅重复提交不再写一遍，也就不占额度
+  if (existing !== value) {
+    // 要写 KV 了：先过当天的公开写入额度，再数订阅——list 也有每天 1000 次的额度
+    if (!(await takeBudget(env.PUSH))) return json({ error: 'daily limit reached' }, 429);
+    if (!existing && (await env.PUSH.list({ prefix: 'sub:' })).keys.length >= MAX_SUBS) {
+      return json({ error: 'too many subscriptions' }, 429);
+    }
+    await env.PUSH.put(key, value);
   }
-  // 同一份订阅重复提交就不再写一遍：公开端点，每次都写的话写额度会被刷光
-  if (existing !== value) await env.PUSH.put(key, value);
 
   // 立刻回推一条。既是欢迎语，也是唯一能在「点了开启」当场验证整条链路
   // （VAPID 签名、加密、投递、SW 弹窗）的办法——否则要等到下一档才知道通不通。
@@ -340,9 +371,9 @@ export async function route(request: Request, env: Env, url: URL): Promise<Respo
   // 用户再点一次反倒走进了退订。
   const o = await sendTo(env, key, payload, {
     title: '通知已开启', body: '新简报出炉时会在这里提醒你。', url: '/', tag: 'newsdesk-welcome' });
-  // subs 在这里是「这次推给了几个订阅」：欢迎推送只推新订阅的这一个
-  const out: FanOut = { subs: 1, sent: 0, gone: 0, failed: 0, errors: [] };
-  tally(out, payload.endpoint, o);
-  await recordPush(env, WELCOME_LOG_KEY, { at: new Date().toISOString(), kind: 'welcome', ...out });
-  return json({ ok: true, welcome: o.result });
+  // 结果只打日志、不进 KV（见 LOG_KEY）。失败原因回给页面，当场就能看到是哪一种
+  console.log(JSON.stringify({ push: 'newsdesk', kind: 'welcome', host: hostOf(payload.endpoint), ...o }));
+  const out: { ok: true; welcome: SendResult; detail?: string } = { ok: true, welcome: o.result };
+  if (o.result === 'fail') out.detail = `${o.status ?? '-'} ${o.detail ?? ''}`.trim().slice(0, 120);
+  return json(out);
 }

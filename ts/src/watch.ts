@@ -4,7 +4,7 @@
 // 够得着；而 Worker 本来就在定时拉 status.json 做停更自查，顺路比对即可，
 // 流水线那边一行都不用改。代价是最多一个轮询间隔的延迟。
 import type { Env } from './env.ts';
-import { errText, LOG_KEY, push, recordPush, type FanOut, type PushLogEntry } from './push.ts';
+import { errText, push, recordPush, type FanOut, type PushLogEntry } from './push.ts';
 
 export interface TaskRow { status?: string; finished?: string; label?: string }
 export interface StatusDoc { date?: string; tasks?: Record<string, TaskRow> }
@@ -48,9 +48,10 @@ const SEEN_KEY = 'seen:reports';
  * 第一次跑（KV 里没有基线）只记录不推送：否则刚上线那一刻会把当天已经完成的
  * 几档一次性全推出来。
  *
- * ⚠️ 基线无论推送成败都推进：宁可漏一条（原因记在日志里），也不能让某一档的
- * 失败把基线卡住——卡住的话下一轮会把同一轮里已经推出去的几档再推一遍，
- * 每 10 分钟一次，直到跨日。
+ * ⚠️ **先记基线、再推送。** 反过来的话，推出去了却记不住（当天 KV 写额度用完、
+ * 服务出错），下一轮会把同样几档再推一遍，每 10 分钟一次。先记的话，记不住就这一轮
+ * 先不推、下一轮再试，一条都没发出去，重试也不会重复；记住之后推送失败的那一档
+ * 就漏了（原因在日志里）——宁可漏一条，不能每 10 分钟重推。
  */
 export async function watchReports(env: Env, text: string): Promise<void> {
   if (!env.PUSH) return;
@@ -62,6 +63,12 @@ export async function watchReports(env: Env, text: string): Promise<void> {
   const first = !raw;
   let seen: Seen = {};
   if (raw) { try { seen = JSON.parse(raw) as Seen; } catch { /* 当成没有基线 */ } }
+
+  // 基线推进到当前状态，但**只在真的变了时才写**：cron 每 10 分钟一次，无条件写
+  // 一天就是 144 次，而免费档 KV 一天只有 1000 次写入。status.json 的键由 Go 按字母序
+  // 输出，同样的状态序列化出来逐字相同。有新报告时状态必然变了，所以这里一定会写。
+  const next = JSON.stringify(snapshot(doc));
+  if (next !== raw) await env.PUSH.put(SEEN_KEY, next); // 写不进去就抛：这一轮不推
 
   const fresh = first ? [] : newReports(doc, seen);
   const log: PushLogEntry[] = [];
@@ -82,12 +89,6 @@ export async function watchReports(env: Env, text: string): Promise<void> {
     log.push({ at: new Date().toISOString(), kind: 'report', task: r.key, date: doc.date, ...out });
   }
   // 日志一轮只写一次：KV 同一个键一秒只许写一次，以前每推一档写一次，同一轮出两档时
-  // 第二次写被拒（429），整轮中断在基线之前
-  await recordPush(env, LOG_KEY, ...log);
-
-  // 基线推进到当前状态，但**只在真的变了时才写**：cron 每 10 分钟一次，无条件写
-  // 一天就是 144 次，而免费档 KV 一天只有 1000 次写入。额度耗尽时推送与订阅会
-  // 静默失败。status.json 的键由 Go 按字母序输出，同样的状态序列化出来逐字相同。
-  const next = JSON.stringify(snapshot(doc));
-  if (next !== raw) await env.PUSH.put(SEEN_KEY, next);
+  // 第二次写被拒（429），整轮中断
+  await recordPush(env, ...log);
 }
