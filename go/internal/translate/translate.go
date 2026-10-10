@@ -391,7 +391,9 @@ func (c *Client) Day(ctx context.Context, root, date string, force bool) error {
 	files := 0
 	for _, e := range ents {
 		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".md") || strings.HasSuffix(n, ".en.md") {
+		// 只翻正式报告：排除英文译文、草稿文件（_draft*.md）和隐藏文件
+		if e.IsDir() || !strings.HasSuffix(n, ".md") || strings.HasSuffix(n, ".en.md") ||
+			strings.Contains(n, "_draft") || strings.HasPrefix(n, ".") {
 			continue
 		}
 		src := filepath.Join(dir, n)

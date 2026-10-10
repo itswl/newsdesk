@@ -24,19 +24,23 @@ func cfgOf(t *testing.T, body string) *config.Config {
 
 func TestClassify(t *testing.T) {
 	cases := map[string]Failure{
-		"Claude usage limit reached":     FailQuota,
-		"HTTP 429 Too Many Requests":     FailQuota,
-		"rate_limit_error":               FailQuota,
-		"Insufficient Balance":           FailBalance,
-		"402 Payment Required":           FailBalance,
-		"余额不足，请充值":                       FailBalance,
-		"your account is in arrears":     FailBalance,
-		"invalid api key":                FailAuth,
-		"API key expired":                FailAuth,
-		"401 Unauthorized":               FailAuth,
-		"FileNotFoundError: data/x.json": FailOther,
-		"connection reset by peer":       FailOther,
-		"":                               FailOther,
+		"Claude usage limit reached": FailQuota,
+		"HTTP 429 Too Many Requests": FailQuota,
+		"rate_limit_error":           FailQuota,
+		"You've hit your weekly limit · resets Oct 5 at 9am (Asia/Singapore)": FailQuota,
+		"You've hit your session limit · resets 2:20pm (Asia/Singapore)":      FailQuota,
+		"Insufficient Balance":       FailBalance,
+		"402 Payment Required":       FailBalance,
+		"余额不足，请充值":                   FailBalance,
+		"your account is in arrears": FailBalance,
+		"invalid api key":            FailAuth,
+		"API key expired":            FailAuth,
+		"401 Unauthorized":           FailAuth,
+		"Failed to authenticate: OAuth session expired and could not be refreshed":  FailAuth,
+		"Your organization has disabled Claude subscription access for Claude Code": FailAuth,
+		"FileNotFoundError: data/x.json":                                            FailOther,
+		"connection reset by peer":                                                  FailOther,
+		"":                                                                          FailOther,
 	}
 	for in, want := range cases {
 		if got := Classify(in); got != want {

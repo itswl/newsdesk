@@ -266,3 +266,39 @@ func TestTruncatedChunkIsNotRetried(t *testing.T) {
 		t.Errorf("截断不该重试：请求了 %d 次，应为 1", n)
 	}
 }
+
+// 草稿文件不该被 Day() 翻：早间草稿只在本地暂存，翻它会白烧 API token
+func TestDaySkipsDraftFiles(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "reports", "2026-10-10")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "trending_draft1200.md"), []byte("# 草稿\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "github-trending_draft0916.md"), []byte("# 草稿\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var calls int32
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content":     []map[string]string{{"type": "text", "text": "# Draft\n"}},
+			"stop_reason": "end_turn",
+			"usage":       map[string]int{"input_tokens": 1, "output_tokens": 1},
+		})
+	}))
+	defer server.Close()
+
+	c := New(server.URL, "k", "m")
+	c.HTTP = server.Client()
+	root := filepath.Dir(filepath.Dir(dir))
+	if err := c.Day(context.Background(), root, "2026-10-10", true); err != nil {
+		t.Fatal(err)
+	}
+	if n := atomic.LoadInt32(&calls); n != 0 {
+		t.Errorf("草稿不该触发翻译调用：实际调用了 %d 次", n)
+	}
+}

@@ -35,8 +35,7 @@ type momoyuItem struct {
 
 // Momoyu 抓热榜并解析成给模型读的文本。
 //
-// 产物按**内容日期**归档而不是运行日期：21:45 跑的是当天的榜，
-// 但接口给的 create_time 才是这批数据真正属于哪一天。
+// 产物按**运行日期**归档，不按源数据自己的日期（见下文）。
 func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error {
 	raw, err := c.Get(ctx, momoyuAPI, map[string]string{"Referer": "https://momoyu.cc/"})
 	var resp momoyuResp

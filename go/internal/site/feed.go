@@ -97,10 +97,13 @@ func (b *Builder) writeFeed() error {
 	//   那天没内容   → 正常，比如某一档当天没跑
 	// 早先这里无条件写「被条数上限截短了」，而英文那份实际是缺译文——
 	// 照着错误的原因去调上限，问题一动不动。
+	// 全量站（Days=0）只留最新 20 条是按设计的上限，不报警告。
 	warn := ""
 	if len(covered) != len(b.days) {
 		if truncated {
-			warn = fmt.Sprintf(" ← 被条数上限 %d 截短了", max)
+			if b.o.Days > 0 {
+				warn = fmt.Sprintf(" ← 被条数上限 %d 截短了", max)
+			}
 		} else {
 			warn = " ← 有几天没有内容"
 		}
