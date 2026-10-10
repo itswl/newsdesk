@@ -152,11 +152,16 @@ func Classify(out string) Failure {
 	}
 	if has("invalid api key", "invalid token", "invalid credential", "api key expired",
 		"token expired", "unauthorized", "authentication failed", "authentication error",
+		"failed to authenticate", "oauth session expired", "session expired", "could not be refreshed",
+		"disabled claude subscription", "disabled subscription",
 		"密钥无效", "认证失败") {
 		return FailAuth
 	}
 	if has("usage limit", "rate limit", "rate_limit", "quota", "too many requests",
-		"429", "5-hour", "limit reached", "overloaded", "capacity") {
+		"429", "5-hour", "limit reached", "weekly limit", "session limit",
+		"hit your limit", "hit your weekly limit", "hit your session limit",
+		"resets at", "resets in", "resets ",
+		"overloaded", "capacity") {
 		return FailQuota
 	}
 	return FailOther

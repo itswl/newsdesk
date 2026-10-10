@@ -235,8 +235,14 @@ func (c *Client) Sync(ctx context.Context, dir string, o SyncOpts) (SyncStat, er
 	var jobs []job
 	local := map[string]bool{}
 	err = filepath.Walk(dir, func(p string, fi os.FileInfo, err error) error {
-		if err != nil || fi.IsDir() {
+		if err != nil {
 			return err
+		}
+		if fi.IsDir() {
+			if strings.HasPrefix(fi.Name(), ".") && p != dir {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		rel, rerr := filepath.Rel(dir, p)
 		if rerr != nil {

@@ -216,6 +216,40 @@ func md5b64(s string) string {
 	return base64.StdEncoding.EncodeToString(sum[:])
 }
 
+// 隐藏文件（.DS_Store）和隐藏目录（.claude, .git）在同步时必须跳过
+func TestSyncSkipsHiddenDirsAndFiles(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "normal.html"), []byte("normal"), 0o644)
+	os.WriteFile(filepath.Join(dir, ".DS_Store"), []byte("junk"), 0o644)
+	hiddenSub := filepath.Join(dir, ".claude", "sub")
+	if err := os.MkdirAll(hiddenSub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(hiddenSub, "hidden.txt"), []byte("hidden"), 0o644)
+
+	var puts []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/o"):
+			json.NewEncoder(w).Encode(map[string]any{"objects": []Object{}})
+		case r.Method == http.MethodPut:
+			puts = append(puts, strings.TrimPrefix(r.URL.Path, "/n/ns/b/bk/o/"))
+		}
+	}))
+	defer srv.Close()
+
+	p, _ := testProfile(t)
+	u, _ := url.Parse(srv.URL)
+	p.Endpoint, p.Namespace = u.String(), "ns"
+	st, err := New(p).Sync(context.Background(), dir, SyncOpts{Bucket: "bk", Parallel: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.Uploaded != 1 || len(puts) != 1 || puts[0] != "normal.html" {
+		t.Fatalf("隐藏文件/目录应被跳过，实际上传了: %v", puts)
+	}
+}
+
 // 对象名是远端给的，拼路径前必须挡住 ../ ——否则一个损坏的清单就能让恢复
 // 写到目录外面去。
 func TestPullRejectsPathTraversal(t *testing.T) {
