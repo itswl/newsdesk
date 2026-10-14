@@ -1,4 +1,5 @@
 // 测试共用的替身。以前 FakeKV 在两个测试文件里各抄一份，已经长歪了（一份会计数、一份不会）。
+import { existsSync, readFileSync } from 'node:fs';
 import { b64uEncode } from '../src/push.ts';
 import type { Env } from '../src/env.ts';
 
@@ -82,4 +83,26 @@ export async function withFetch<T>(fake: (url: string, init?: RequestInit) => Pr
   const orig = globalThis.fetch;
   globalThis.fetch = fake as unknown as typeof fetch;
   try { return await body(); } finally { globalThis.fetch = orig; }
+}
+
+// 读 wrangler 配置里的 cron，换算成间隔与相对整点的偏移（毫秒）。只认这个仓库用得到的
+// 三种写法：每 N 分钟（星号斜杠 N）、每小时第 M 分钟、每 H 小时的第 M 分钟。认不出就抛，
+// 让人来改这里，不猜。文件不存在返回 null：wrangler.toml 不进版本控制，换台机器可能没有。
+export function cronOf(file: string): { expr: string; intervalMs: number; offsetMs: number } | null {
+  const path = new URL(`../${file}`, import.meta.url);
+  if (!existsSync(path)) return null;
+  const expr = /^crons\s*=\s*\[\s*"([^"]+)"\s*\]/m.exec(readFileSync(path, 'utf8'))?.[1];
+  if (!expr) throw new Error(`${file} 里没有单条 cron`);
+  const bad = () => new Error(`认不出 ${file} 的 cron「${expr}」，改 test/fixtures.ts 的 cronOf`);
+  const [min = '', hour = '', ...rest] = expr.trim().split(/\s+/);
+  if (rest.length !== 3 || rest.some(f => f !== '*')) throw bad();
+  const every = (f: string) => /^\*\/(\d+)$/.exec(f)?.[1];
+  const minStep = every(min);
+  if (minStep && hour === '*') return { expr, intervalMs: Number(minStep) * 60e3, offsetMs: 0 };
+  if (!/^\d+$/.test(min)) throw bad();
+  const offsetMs = Number(min) * 60e3;
+  if (hour === '*') return { expr, intervalMs: 3.6e6, offsetMs };
+  const hourStep = every(hour);
+  if (hourStep) return { expr, intervalMs: Number(hourStep) * 3.6e6, offsetMs };
+  throw bad();
 }

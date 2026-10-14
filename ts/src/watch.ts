@@ -49,9 +49,9 @@ const SEEN_KEY = 'seen:reports';
  * 几档一次性全推出来。
  *
  * ⚠️ **先记基线、再推送。** 反过来的话，推出去了却记不住（当天 KV 写额度用完、
- * 服务出错），下一轮会把同样几档再推一遍，每 10 分钟一次。先记的话，记不住就这一轮
+ * 服务出错），下一轮会把同样几档再推一遍，每轮 cron 一次。先记的话，记不住就这一轮
  * 先不推、下一轮再试，一条都没发出去，重试也不会重复；记住之后推送失败的那一档
- * 就漏了（原因在日志里）——宁可漏一条，不能每 10 分钟重推。
+ * 就漏了（原因在日志里）——宁可漏一条，不能每轮都重推。
  */
 export async function watchReports(env: Env, text: string): Promise<void> {
   if (!env.PUSH) return;
@@ -64,8 +64,8 @@ export async function watchReports(env: Env, text: string): Promise<void> {
   let seen: Seen = {};
   if (raw) { try { seen = JSON.parse(raw) as Seen; } catch { /* 当成没有基线 */ } }
 
-  // 基线推进到当前状态，但**只在真的变了时才写**：cron 每 10 分钟一次，无条件写
-  // 一天就是 144 次，而免费档 KV 一天只有 1000 次写入。status.json 的键由 Go 按字母序
+  // 基线推进到当前状态，但**只在真的变了时才写**：无条件写的话每轮 cron 都写一次，
+  // 而免费档 KV 一天只有 1000 次写入、整个账号共用。status.json 的键由 Go 按字母序
   // 输出，同样的状态序列化出来逐字相同。有新报告时状态必然变了，所以这里一定会写。
   const next = JSON.stringify(snapshot(doc));
   if (next !== raw) await env.PUSH.put(SEEN_KEY, next); // 写不进去就抛：这一轮不推

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { evaluate, STALE_HOURS_DEFAULT } from '../src/selfcheck.ts';
+import { CRON_EVERY_MS, evaluate, RENOTIFY_HOURS, STALE_HOURS_DEFAULT } from '../src/selfcheck.ts';
+import { cronOf } from './fixtures.ts';
 
 const NOW = Date.parse('2026-09-17T12:00:00Z');
 
@@ -53,4 +54,19 @@ test('status.json 不是合法 JSON 也要告警', () => {
 test('默认阈值不会被正常的夜间停顿触发', () => {
   const v = evaluate(doc({ generated_epoch: NOW / 1000 - 19 * 3600 }), NOW, STALE_HOURS_DEFAULT);
   assert.equal(v.bad, false);
+});
+
+// KV 写不进去时，停更告警按 CRON_EVERY_MS 退回按钟点节流。它和 cron 是两个文件里的同一个数：
+// cron 定在每小时第 10 分钟、这里还是 10 分钟的话，回退时一条告警都发不出去，而且不报错。
+// wrangler.toml 不进版本控制，在就一起核对——真正部署的是它
+test('CRON_EVERY_MS 与 wrangler 配置里 cron 的间隔一致', () => {
+  assert.ok(cronOf('wrangler.example.toml'), '模板必须在');
+  for (const file of ['wrangler.example.toml', 'wrangler.toml']) {
+    const c = cronOf(file);
+    if (!c) continue;
+    assert.equal(CRON_EVERY_MS, c.intervalMs,
+      `${file} 的 cron「${c.expr}」与 src/selfcheck.ts 的 CRON_EVERY_MS 对不上`);
+    assert.equal((RENOTIFY_HOURS * 3.6e6) % c.intervalMs, 0,
+      `${file} 的 cron 间隔要能整除 ${RENOTIFY_HOURS} 小时，否则按钟点节流对不齐`);
+  }
 });
