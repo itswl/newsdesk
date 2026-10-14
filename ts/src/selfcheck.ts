@@ -65,14 +65,21 @@ export function evaluate(text: string, nowMs: number, thresholdHours: number): V
 /**
  * 同一次停更多久才再告警一次。
  *
- * cron 为了及时发现新简报提到了 10 分钟一次，但停更是**一个持续状态**：不节流的话
- * 机器关一天就是 144 条飞书消息，而告警一旦变噪声就会被忽略，那比迟钝危险得多。
- * 6 小时沿用提频之前的节奏。
+ * cron 为了发现新简报每小时跑一次，比停更自查本身需要的密，而停更是**一个持续状态**：
+ * 不节流的话机器关一天就是 24 条飞书消息，告警一旦变噪声就会被忽略，那比迟钝危险得多。
+ * 6 小时沿用最早只有停更自查时的节奏。
  */
 export const RENOTIFY_HOURS = 6;
 const ALERTED_KEY = 'alerted:stale';
-/** wrangler.toml 里 cron 的间隔。只在节流状态存不进 KV 时用来退回按钟点节流 */
-const CRON_EVERY_MS = 10 * 60e3;
+/**
+ * wrangler.toml 里 cron 的间隔。只在节流状态存不进 KV 时用来退回按钟点节流：每
+ * RENOTIFY_HOURS 的头 CRON_EVERY_MS 里恰好落进一轮 cron，就只有那一轮发。
+ *
+ * ⚠️ 必须与 cron 的实际间隔一致，而 cron 写在另一个文件里。比实际短，可能一轮都落不进
+ * 那个窗口，回退时一条告警也发不出（cron 定在每小时第 10 分钟、这里还是 10 分钟就是
+ * 这样），而且不报错；比实际长，同一个 6 小时会发好几条。测试拿 wrangler 配置核对两者。
+ */
+export const CRON_EVERY_MS = 60 * 60e3;
 
 /**
  * 停更自查。
@@ -111,8 +118,8 @@ export async function staleWatch(env: Env, got: { ok: boolean; status: number; t
   }));
 
   if (!verdict.bad) {
-    // 恢复了就清掉节流，下次出事立刻响。先读再删：cron 每 10 分钟一次，无条件
-    // delete 一天就是 144 次，而免费档 KV 的删除额度一天只有 1000 次（读有十万次）
+    // 恢复了就清掉节流，下次出事立刻响。先读再删：无条件 delete 的话每轮 cron 都删一次，
+    // 而免费档 KV 的删除额度一天只有 1000 次、整个账号共用（读有十万次）
     if (env.PUSH) {
       try {
         if (await env.PUSH.get(ALERTED_KEY)) await env.PUSH.delete(ALERTED_KEY);
@@ -130,7 +137,7 @@ export async function staleWatch(env: Env, got: { ok: boolean; status: number; t
  * 这一轮该不该发停更告警；该发就顺手记下时刻。
  *
  * ⚠️ KV 读写失败（比如当天写额度用完）时绝不能因此把告警吞掉——以前先写节流、
- * 写失败就抛，停更告警一条都发不出去。也不能退成每 10 分钟一条，于是退回按钟点
+ * 写失败就抛，停更告警一条都发不出去。也不能退成每轮 cron 一条，于是退回按钟点
  * 节流：每 RENOTIFY_HOURS 的头一个 cron 间隔里才发。
  */
 async function claimAlert(kv: KVNamespace, nowMs: number): Promise<boolean> {

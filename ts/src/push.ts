@@ -305,7 +305,7 @@ export interface PushLogEntry extends FanOut {
  *
  * ⚠️ **从不抛异常**。日志是诊断用的，它写不进去（额度用完、同一秒写了两次）不能
  * 拦住后面的事：以前它在推送循环里、基线写入之前，一抛就让基线停在原地，下一轮
- * 把同样几档再推一遍，每 10 分钟一次。
+ * 把同样几档再推一遍，每轮 cron 一次。
  */
 export async function recordPush(env: Env, ...entries: PushLogEntry[]): Promise<void> {
   for (const e of entries) console.log(JSON.stringify({ push: 'newsdesk', ...e }));

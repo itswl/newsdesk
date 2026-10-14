@@ -4,7 +4,7 @@ import { newReports, snapshot, watchReports } from '../src/watch.ts';
 import { staleWatch } from '../src/selfcheck.ts';
 import { LOG_KEY } from '../src/push.ts';
 import type { Env } from '../src/env.ts';
-import { envOf, FakeKV, subBody, vapidEnv, withFetch } from './fixtures.ts';
+import { cronOf, envOf, FakeKV, subBody, vapidEnv, withFetch } from './fixtures.ts';
 
 const doc = (date: string, tasks: Record<string, string>) => ({
   date,
@@ -76,7 +76,7 @@ test('第二轮出现新报告才推，且基线跟着推进', async () => {
   assert.deepEqual(JSON.parse(kv.m.get('seen:reports')!).tasks, { ai: 'ok', douban: 'ok' });
 });
 
-// cron 为了及时发现新简报提到了 10 分钟一次；不节流的话机器关一天就是 144 条飞书消息
+// cron 为了发现新简报每小时一次；不节流的话机器关一天就是 24 条飞书消息
 test('同一次停更按小时节流，恢复后立刻解除', async () => {
   const kv = new FakeKV();
   const sent: string[] = [];
@@ -102,8 +102,8 @@ test('同一次停更按小时节流，恢复后立刻解除', async () => {
   } finally { globalThis.fetch = orig; }
 });
 
-// cron 每 10 分钟一次。基线没变还照写的话一天就是 144 次写入，而免费档 KV 一天
-// 只有 1000 次；额度耗尽时推送与订阅会静默失败
+// 基线没变还照写的话每轮 cron 都写一次，而免费档 KV 一天只有 1000 次、整个账号共用；
+// 额度耗尽时推送与订阅会静默失败
 test('基线没变就不写 KV', async () => {
   const kv = new FakeKV();
   const d = JSON.stringify(doc('2026-09-28', { ai: 'ok', douban: 'pending' }));
@@ -125,7 +125,7 @@ test('停更自查：站点正常时不去删一个本来就不存在的节流�
   const now = 1790000000000;
   const fresh = JSON.stringify({ generated_epoch: Math.floor(now / 1000), date: '2026-09-28', tasks: {} });
   for (let i = 0; i < 5; i++) await staleWatch(env, { ok: true, status: 200, text: fresh }, now);
-  assert.equal(kv.deletes, 0, '每轮都 delete 一天就是 144 次，吃删除额度');
+  assert.equal(kv.deletes, 0, '每轮都 delete 会白吃删除额度');
 });
 
 // 这条就是 09-29 缺的东西：定时任务发现了新报告、调用了推送，但结果没落在任何地方，
@@ -160,7 +160,7 @@ async function twoFresh(kv: FakeKV) {
 }
 
 // 以前每推一档写一次日志。KV 同一个键一秒只许写一次，第二次写回 429，整轮中断在
-// 基线之前——下一轮把这两档再推一遍，每 10 分钟一次，直到跨日
+// 基线之前——下一轮把这两档再推一遍，每轮 cron 一次，直到跨日
 test('同一轮出两档：各推一次，日志只写一次，基线照样推进，下一轮不重推', async () => {
   const kv = new FakeKV();
   const { env, status } = await twoFresh(kv);
@@ -177,7 +177,7 @@ test('同一轮出两档：各推一次，日志只写一次，基线照样推�
   assert.equal(posted, 2, '下一轮不该重推');
 });
 
-// 推出去了却记不住（当天写额度用完）的话，下一轮会把同样几档再推一遍，每 10 分钟一次。
+// 推出去了却记不住（当天写额度用完）的话，下一轮会把同样几档再推一遍，每轮 cron 一次。
 // 先记基线：记不住就这一轮先不推，下一轮记住了再推，一条都不重复
 test('基线写不进去：这一轮一条都不推，下一轮写进去了再推，只推一次', async () => {
   const kv = new FakeKV();
@@ -222,7 +222,9 @@ test('读不到订阅列表：这一档记进日志，别的档照推，基线�
 });
 
 // 节流状态存不进 KV（比如当天写额度用完）时，以前先写节流、写失败就抛，
-// 停更告警一条都发不出去；也不能退成每 10 分钟一条
+// 停更告警一条都发不出去；也不能退成每轮 cron 一条。
+// 轮次按模板里真实的 cron 排：以前写死「整点后 1 分钟、20 分钟」，cron 改成每小时第 10 分钟
+// 之后，按钟点节流的窗口要是还是 10 分钟，一轮都落不进去——那种写死的测试照样会过
 test('节流状态写不进 KV：停更告警照发，改按钟点每 6 小时一条', async () => {
   const kv = new FakeKV();
   kv.fail = (op, k) => op === 'put' && k === 'alerted:stale';
@@ -230,14 +232,22 @@ test('节流状态写不进 KV：停更告警照发，改按钟点每 6 小时�
   const env = { ...envOf(kv), ALERT_WEBHOOK: 'https://open.feishu.cn/x/hook' } as Env;
   const stale = JSON.stringify({ generated_epoch: 1000, date: '2026-09-01', tasks: {} });
   const bucket = 6 * 3.6e6 * 1000; // 某个 6 小时整点
+  const six = 6 * 3.6e6;
+  const { intervalMs, offsetMs } = cronOf('wrangler.example.toml')!;
+  const ticks = (from: number, to: number) => {
+    const out: number[] = [];
+    for (let t = bucket + offsetMs; t < bucket + to; t += intervalMs) if (t >= bucket + from) out.push(t);
+    return out;
+  };
+  const check = (t: number) => staleWatch(env, { ok: true, status: 200, text: stale }, t);
   await withFetch(async (_u, init) => { sent.push(String(init?.body)); return new Response('{"code":0}'); }, async () => {
-    await staleWatch(env, { ok: true, status: 200, text: stale }, bucket + 60e3);
+    const [first, ...rest] = ticks(0, six);
+    await check(first!);
     assert.equal(sent.length, 1, '整点后头一轮要发');
-    await staleWatch(env, { ok: true, status: 200, text: stale }, bucket + 20 * 60e3);
-    await staleWatch(env, { ok: true, status: 200, text: stale }, bucket + 3 * 3.6e6);
+    for (const t of rest) await check(t);
     assert.equal(sent.length, 1, '同一个 6 小时里不再发');
-    await staleWatch(env, { ok: true, status: 200, text: stale }, bucket + 6 * 3.6e6 + 60e3);
-    assert.equal(sent.length, 2, '下一个 6 小时再提醒一次');
+    for (const t of ticks(six, 2 * six)) await check(t);
+    assert.equal(sent.length, 2, '下一个 6 小时再提醒一次，也只一次');
   });
 });
 
