@@ -8,8 +8,10 @@
 - `data/trending/<今天>/snap_t3.json` —— 今日 API 快照，含 `_baseline_file`、`_baseline_ts`、`_window_hours`
 - 基线快照的相对路径写在 `_baseline_file` 里，直接读它算增量
 - `data/trending/<今天>/history.json` —— **跨期比对，回看 7 期榜单**：每个项目的 `boards_seen`
-  在榜期数、`rank_history` 名次轨迹、`returning` 是否掉榜后回归，以及 `dropped_from_prev`
-- `snap_t3.json` 的 `board_extras` 字段已预先采集好榜单项目的补充指标：`releases`、`asset_downloads_total`、`latest_tag`、`latest_downloads`、`total_commits_approx`、`first_commit`
+  在榜期数（窗内出现的期数，含今天）、`rank_history` 名次轨迹（窗内每期一条，与
+  `boards_seen` 一一对应）、`returning` 是否掉榜后回归，以及 `dropped_from_prev`
+- `snap_t3.json` 的 `board_extras` 字段已预先采集好榜单项目的补充指标：`releases`、`asset_downloads_total`、`latest_tag`、`latest_downloads`
+- **`board_extras` 里没有 `total_commits_approx` 和 `first_commit`，这是有意的**：两个字段都要按仓库额外调用 GitHub 接口，会挤破 60 次/小时的预算。**它们的缺失不算方法论缺口，不要写进「数据核查」里**。
 
 **分析层没有网络也没有任何凭据**，所有数据都已在上述文件里。需要而数据里没有的，直接写「本期未采集」，不要尝试联网或调用外部命令获取。
 
