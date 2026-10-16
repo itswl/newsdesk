@@ -283,15 +283,22 @@ func trending(st *store.Store, date, dd string) (map[string]any, error) {
 		onBoard[x.Repo] = true
 		var appear []map[string]any
 		var firstDay string
+		// 在榜期数与名次轨迹**分开数**。
+		//
+		// ⚠️ 这两件事曾经共用一个切片：rank_history 截断到 4 条，boards_seen 又拿
+		// 截断后的长度算，于是「连续在榜 7 期」被写成 5——静默少报。实测后果是下一
+		// 期的模型翻本期文件去核上一期「自 10-10 起连续 6 期 #1」的结论，核不上
+		// （文件里最早只到 10-12），就把一条真结论当成「两期文件矛盾、不可复核」
+		// 写进了公开报告。hist 本身已被 Window 截过，这里不再另设上限。
+		seen := 0
 		for _, h := range hist {
 			for i, r := range h.repos {
 				if r == x.Repo {
 					if firstDay == "" {
 						firstDay = h.day
 					}
-					if len(appear) < 4 {
-						appear = append(appear, map[string]any{"date": h.day, "rank": i + 1})
-					}
+					seen++
+					appear = append(appear, map[string]any{"date": h.day, "rank": i + 1})
 					break
 				}
 			}
@@ -301,7 +308,7 @@ func trending(st *store.Store, date, dd string) (map[string]any, error) {
 			prevDay = hist[0].day
 		}
 		rows = append(rows, map[string]any{
-			"repo": x.Repo, "rank_today": x.Rank, "boards_seen": len(appear) + 1,
+			"repo": x.Repo, "rank_today": x.Rank, "boards_seen": seen + 1,
 			"rank_history": appear,
 			// returning：以前上过榜但上一期不在——「回锅」比「连续在榜」是不同的信号
 			"returning": firstDay != "" && firstDay != prevDay,
