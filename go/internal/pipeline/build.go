@@ -125,7 +125,7 @@ func Republish(ctx context.Context, root string, cfg *config.Config, dry bool, o
 	if publicDir != "" && publicDir != localDir {
 		dirs = append(dirs, publicDir)
 	}
-	if err := LeakCheck(root, cfg, dirs...); err != nil {
+	if err := LeakGate(root, cfg, out, dirs...); err != nil {
 		return err
 	}
 	return Publish(ctx, root, publicDir, cfg, dry, out)
@@ -139,6 +139,23 @@ func LeakCheck(root string, cfg *config.Config, dirs ...string) error {
 		return fmt.Errorf("产出里发现 %d 处疑似凭据，已拒绝发布", len(hits))
 	}
 	return nil
+}
+
+// LeakGate 是发布路径上的自检闸门：发布前调用它，而不是直接调 LeakCheck。
+//
+// ⚠️ DANGER=1 时**整段跳过**。这是危险模式明确要的一部分——「不限制能力」也包括
+// 不拦「把凭据写进公开产出」这一步。跳过必须留一行，不能静默：这是整条链上唯一
+// 不可逆的动作（发布之后报告就在公开站点上了）。
+//
+// 想要无条件自检（不认 DANGER）请直接调 LeakCheck：newsdesk leakcheck 就是这么用的。
+func LeakGate(root string, cfg *config.Config, out io.Writer, dirs ...string) error {
+	if cfg.Danger() {
+		if out != nil {
+			fmt.Fprintln(out, "  ⚠ DANGER=1：跳过发布前凭据自检，产出原样发布")
+		}
+		return nil
+	}
+	return LeakCheck(root, cfg, dirs...)
 }
 
 // Publish 同步到对象存储。没配桶就跳过，不是错误。

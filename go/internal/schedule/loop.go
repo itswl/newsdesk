@@ -150,8 +150,21 @@ func (l *Loop) reloadConfig() (changed bool, err error) {
 		return false, nil
 	}
 	before, beforeAudit := engine.PlanLine(l.Cfg), l.auditTime()
+	wasDanger := l.Cfg.Danger()
 	l.Cfg = cfg
 	l.logf("配置已重新读取（%s），下一档起生效", name)
+	// 危险模式开或关都要主动说一声。它是个持续状态：只在启动时报一次的话，
+	// 热重读打开的这一次会静默生效，而它关掉的是整套防护。
+	if now := cfg.Danger(); now != wasDanger {
+		if now {
+			l.logf("⚠ %s", config.DangerLine)
+			l.alert("newsdesk 危险模式已开启", config.DangerLine+
+				"\n从下一档起生效。要关掉：把 config.conf 里的 DANGER 去掉或改成 0。")
+		} else {
+			l.logf("危险模式已关闭，防护恢复（沙箱、凭据拒读、发布前自检）")
+			l.alert("newsdesk 危险模式已关闭", "config.conf 里的 DANGER 已去掉或改成 0，防护从下一档起恢复。")
+		}
+	}
 	// 引擎变了要说出来：报告是谁写的必须看得见
 	if after := engine.PlanLine(cfg); after != before {
 		l.logf("%s", after)
@@ -215,7 +228,7 @@ func (l *Loop) alert(title, text string) {
 }
 
 func (l *Loop) health(st *State, run *Running) error {
-	return WriteHealth(l.healthPath, st, l.sched, run, l.Version)
+	return WriteHealth(l.healthPath, st, l.sched, run, l.Version, l.Cfg.Danger())
 }
 
 func (l *Loop) logf(f string, a ...any) {
@@ -247,6 +260,11 @@ func (l *Loop) Run(ctx context.Context) error {
 	l.logf("时间表：%s", strings.Join(sched, " | "))
 	l.logf("%s", engine.PlanLine(l.Cfg))
 	l.logf("日终核对：%s", l.auditTime())
+	if l.Cfg.Danger() {
+		l.logf("⚠ %s", config.DangerLine)
+		l.alert("newsdesk 危险模式已开启", config.DangerLine+
+			"\n这个开关下跑出来的报告会照常公开发布。要关掉：把 config.conf 里的 DANGER 去掉或改成 0。")
+	}
 
 	st, err := Load(l.statePath)
 	if err != nil {
@@ -342,6 +360,7 @@ func (l *Loop) reconcile(t task.Task, now time.Time, st *State) bool {
 	prev := st.Tasks[t.Key]
 	st.Tasks[t.Key] = TaskState{
 		Date: day, Status: "ok", Engine: prev.Engine, Attempts: prev.Attempts,
+		Danger:   prev.Danger,
 		Finished: fi.ModTime().Format(time.RFC3339),
 		Reason:   "按产出校正（" + reconcileWhy(prev, day) + "）",
 	}
@@ -365,6 +384,11 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 	// 任务跑着的时候主循环阻塞在下面这一行，心跳没人写。status 要求「进程活着且
 	// 心跳新于 5 分钟」，一档超过 5 分钟就被报成「已停止」——每天四档各误报一次，
 	// 恰好落在最可能有人去看的那段时间。旁路心跳顺带写明正在跑哪一档、何时开始。
+	danger := l.Cfg.Danger()
+	if danger {
+		// 这一档是在什么模式下跑的，必须在这档自己的日志里出现——报告次日就公开了
+		l.logf("[%s] ⚠ %s", t.Key, config.DangerLine)
+	}
 	stop := l.heartbeatWhile(st, t.Key, time.Minute)
 	res, err := pipeline.Run(ctx, pipeline.Options{
 		Root: l.Root, Home: l.Home, Cfg: l.Cfg, Task: t, Date: day,
@@ -383,6 +407,7 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 	}
 
 	next, final := AfterRun(st.Tasks[t.Key], day, res.Engine, res.Failure, err, d.Late, end)
+	next.Danger = danger
 	st.Tasks[t.Key] = next
 	if e := st.Save(l.statePath); e != nil {
 		l.logf("!! 状态保存失败：%v", e)

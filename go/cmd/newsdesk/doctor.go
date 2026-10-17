@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -69,7 +70,7 @@ func cmdDoctor(ctx context.Context, args []string) error {
 	}
 
 	fmt.Println("\n沙箱")
-	checkSandbox(ctx, d, root)
+	checkSandbox(ctx, d, root, cfg)
 
 	fmt.Println("\n语言")
 	fmt.Print(indent(langs.Explain(cfg, root)))
@@ -174,8 +175,33 @@ func checkEngine(d *doc, kind string, cfg *config.Config, isPrimary bool) {
 // 「能执行命令」这一项是为套娃失效模式设的：两层 seatbelt 嵌套会让 Bash 整个
 // 失效（sandbox_apply: Operation not permitted，连 echo 都跑不了），而模型会靠
 // Read/Write 工具绕过去把任务做完，日志上看不出异常。
-func checkSandbox(ctx context.Context, d *doc, root string) {
+func checkSandbox(ctx context.Context, d *doc, root string, cfg *config.Config) {
 	h := home()
+	danger := cfg.Danger()
+	if danger {
+		d.bad("%s", config.DangerLine)
+		b, err := sandbox.Settings(h, root, true)
+		if err != nil {
+			d.bad("危险模式的权限文件渲染失败：%v", err)
+			return
+		}
+		m := map[string]any{}
+		if err := json.Unmarshal(b, &m); err != nil {
+			d.bad("危险模式的权限文件不是合法 JSON：%v", err)
+			return
+		}
+		sb, _ := m["sandbox"].(map[string]any)
+		perms, _ := m["permissions"].(map[string]any)
+		if sb["enabled"] != false || sb["failIfUnavailable"] != false {
+			d.bad("危险模式下沙箱竟然还是开的（enabled=%v failIfUnavailable=%v）", sb["enabled"], sb["failIfUnavailable"])
+		} else if _, ok := perms["deny"]; ok {
+			d.bad("危险模式下权限文件里竟然还有 deny 规则")
+		} else {
+			d.ok("危险模式生效：沙箱关闭、无 deny 规则（这是有意的，DANGER 一去掉就恢复）")
+		}
+		d.note("要恢复防护：把 config.conf 里的 DANGER 去掉或改成 0，下一档起生效，不用重启")
+		return
+	}
 	deny := append(sandbox.DenyDirs(h), sandbox.DenyFiles(h, root)...)
 	if len(deny) == 0 {
 		// 清单为空的 profile 什么都不拦，比没有沙箱更糟——它看起来有
@@ -184,7 +210,7 @@ func checkSandbox(ctx context.Context, d *doc, root string) {
 	}
 	d.ok("拒绝清单 %d 条", len(deny))
 
-	if _, err := sandbox.Settings(h, root); err != nil {
+	if _, err := sandbox.Settings(h, root, false); err != nil {
 		d.bad("claude 权限文件渲染失败：%v", err)
 	} else {
 		d.ok("claude 权限文件可渲染（fail-closed：沙箱起不来则整档不跑）")

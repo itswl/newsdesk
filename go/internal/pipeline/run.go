@@ -128,7 +128,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if publicDir != "" && publicDir != localDir {
 		dirs = append(dirs, publicDir)
 	}
-	if err := LeakCheck(o.Root, o.Cfg, dirs...); err != nil {
+	if err := LeakGate(o.Root, o.Cfg, out, dirs...); err != nil {
 		done()
 		res.Duration = time.Since(start)
 		return res, err

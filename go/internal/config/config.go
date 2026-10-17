@@ -70,7 +70,47 @@ func Parse(path string, raw []byte) (*Config, error) {
 	if err := sc.Err(); err != nil {
 		return nil, fmt.Errorf("读 %s: %w", path, err)
 	}
+	// DANGER 的值必须先认出来才算解析成功。这个键猜错的代价不对称：把「开着」
+	// 认成「关着」只是白跑一档，把「关着」认成「开着」则等于把沙箱、网络、凭据
+	// 拒读和发布前自检**一起关掉**——而这是一条无人值守、产出当天公开发布的
+	// 流水线。所以不取默认值，认不出来就按坏配置处理（调度器沿用上一份并告警）。
+	if v, ok := c.vals["DANGER"]; ok && v != "" {
+		if _, known := parseDanger(v); !known {
+			// 只报行号与键名，不回显值：这条报错会进日志、会发到告警群
+			return nil, fmt.Errorf("%s:%d DANGER 只认 1 或 0（内容不回显）", path, seen["DANGER"])
+		}
+	}
 	return c, nil
+}
+
+// parseDanger 认 DANGER 的取值。第二项为 false 表示认不出来。
+func parseDanger(v string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "1", "true", "on", "yes", "y":
+		return true, true
+	case "0", "false", "off", "no", "n":
+		return false, true
+	}
+	return false, false
+}
+
+// DangerLine 是危险模式的一句话说明。
+//
+// 日志、告警、status、doctor 共用同一句：分头各写一遍的话，改了一处忘另一处，
+// 同一个开关在四个地方会有四种说法。
+const DangerLine = "DANGER=1 危险模式：不经沙箱、可联网、凭据可读、发布前不做凭据自检"
+
+// Danger 是否处于危险模式：不经沙箱、可联网、凭据可读、发布前不做凭据自检。
+//
+// 取值已在 Parse 里校验过，所以调用方不用处理错误。缺项就是关着——默认必须是
+// 关着的。nil 配置（只在本机看简报、或测试里没配 Cfg）同样算关着：这个方向的
+// 猜错只是防护还在，反方向才是把防护全丢。
+func (c *Config) Danger() bool {
+	if c == nil {
+		return false
+	}
+	on, ok := parseDanger(c.vals["DANGER"])
+	return ok && on
 }
 
 // Get 返回字符串值，缺项返回 def。

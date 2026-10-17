@@ -13,12 +13,17 @@ import (
 )
 
 type TaskState struct {
-	Date        string  `json:"date"`
-	Status      string  `json:"status"` // ok | failed | retrying | skipped
-	Attempts    int     `json:"attempts,omitempty"`
-	Finished    string  `json:"finished,omitempty"`
-	Engine      string  `json:"engine,omitempty"`
-	Reason      string  `json:"reason,omitempty"`
+	Date     string `json:"date"`
+	Status   string `json:"status"` // ok | failed | retrying | skipped
+	Attempts int    `json:"attempts,omitempty"`
+	Finished string `json:"finished,omitempty"`
+	Engine   string `json:"engine,omitempty"`
+	Reason   string `json:"reason,omitempty"`
+	// Danger 记下这一档是不是在危险模式（DANGER=1）下跑的。
+	//
+	// 报告公开发布、沙箱与凭据拒读当时都是关着的——事后要能回答「这份是哪一种
+	// 跑出来的」，而日志会滚、status.json 只反映当下。落在状态文件里才留得住。
+	Danger      bool    `json:"danger,omitempty"`
 	LastAttempt int64   `json:"last_attempt_ts,omitempty"`
 	LateHours   float64 `json:"late_hours,omitempty"`
 }
@@ -95,6 +100,9 @@ type Health struct {
 	// 调度器进程的构建版本。重新编译之后不重启，它会一直跑旧代码；status 拿这一项
 	// 和自己的版本比，对不上就提醒重启。
 	Version string `json:"version,omitempty"`
+	// Danger 是这台机器当前跑不跑危险模式（DANGER=1）。带进 site/status.json，
+	// 让站点和外部监控也能看到「站上的东西是无限制跑出来的」。
+	Danger bool `json:"danger,omitempty"`
 }
 
 // Running 正在执行的任务。nil 表示空闲。
@@ -110,11 +118,12 @@ type Running struct {
 // 变陈旧，才是唯一能覆盖「整机不在」的办法。
 //
 // ⚠️ 时间戳带时区并另给 epoch：消费者是跑在 UTC 里的 Worker。
-func WriteHealth(path string, s *State, sched []string, run *Running, version string) error {
+func WriteHealth(path string, s *State, sched []string, run *Running, version string, danger bool) error {
 	now := time.Now()
 	h := Health{
 		Heartbeat: now.Format(time.RFC3339), HeartbeatEpoch: now.Unix(),
 		PID: os.Getpid(), Schedule: sched, Tasks: map[string]string{}, Version: version,
+		Danger: danger,
 	}
 	if run != nil {
 		h.Running, h.RunningSince = run.Key, run.Since.Format(time.RFC3339)
