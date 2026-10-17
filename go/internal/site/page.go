@@ -102,14 +102,10 @@ func (b *Builder) headIcons() string {
 		// 以独立窗口打开，不带浏览器地址栏。iOS 认 apple- 那个，Android 走清单。
 		standalone = `<meta name="apple-mobile-web-app-capable" content="yes">` +
 			`<meta name="mobile-web-app-capable" content="yes">`
-		// black-translucent：页面铺到状态栏底下，那一条露出来的是页面自己的
-		// 背景色，于是永远跟着当前主题走。default 是白底黑字、启动时定死，深色
-		// 主题下那条带永远是白的（2026-10-18 之前就是这个形态）。
-		//
-		// ⚠️ 代价：iOS 文档说 black-translucent 下状态栏文字恒为白色，浅色主题
-		// 可能读不出来。现代 iOS 会不会按 color-scheme 反过来给深色文字没验证过。
-		// 真读不出来就改回 default —— 只有这一个常量要动。
-		statusBar = `<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">`
+		// default 而不是 black-translucent：后者让页面顶到状态栏下面，状态栏文字
+		// 恒为白色，浅色主题下白字压在浅色页头上直接看不见。代价是不铺到状态栏
+		// 底下，换来两套主题都不会出现读不出的状态栏。
+		statusBar = `<meta name="apple-mobile-web-app-status-bar-style" content="default">`
 		// 报告里成串的数字会被 iOS 认成电话号码，变成蓝色链接
 		noPhone = `<meta name="format-detection" content="telephone=no">`
 	)
