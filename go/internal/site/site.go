@@ -24,7 +24,7 @@ type Options struct {
 	Out      string      // 输出目录（绝对路径）
 	Days     int         // 只生成最近 N 天，0 = 全部
 	Lang     i18n.Lang   // 本次生成的语言
-	AllLangs []i18n.Lang // 语言切换器里列哪些；少于 2 个则不显示切换器
+	AllLangs []i18n.Lang // 本站实际生效的语言；决定 hreflang 互链与 feed 的 alternate
 	SiteURL  string      // 对外地址，留空则不生成 feed
 	Contact  string
 	// PushKey VAPID 公钥。留空则页面上不出现通知开关。

@@ -68,7 +68,6 @@ var s = map[string][2]string{
 	// 主题按钮的可访问名用状态名而不是动作名：配 aria-pressed 读出来才是
 	// 「深色模式，已按下」；动作名留在 title 里，有 aria-label 时它退为描述。
 	"nav.theme_label": {"深色模式", "Dark mode"},
-	"nav.lang":        {"切换语言", "Switch language"},
 	"nav.tabs_label":  {"栏目", "Sections"},
 	"nav.skip":        {"跳到正文", "Skip to content"},
 
