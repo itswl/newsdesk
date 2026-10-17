@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/itswl/newsdesk/internal/config"
 	"github.com/itswl/newsdesk/internal/engine"
 	"github.com/itswl/newsdesk/internal/langs"
 	"github.com/itswl/newsdesk/internal/pipeline"
@@ -162,7 +163,7 @@ func cmdPublish(ctx context.Context, args []string) error {
 	}
 	// 发布前必须自检。放到发布之后等于没有自检。
 	dirs := []string{filepath.Join(root, "site"), filepath.Join(root, "reports")}
-	if err := pipeline.LeakCheck(root, cfg, dirs...); err != nil {
+	if err := pipeline.LeakGate(root, cfg, os.Stdout, dirs...); err != nil {
 		return err
 	}
 	return pipeline.Publish(ctx, root, publicDir, cfg, *dry, os.Stdout)
@@ -250,6 +251,11 @@ func cmdStatus(ctx context.Context, args []string) error {
 
 	today := store.Today()
 	fmt.Printf("%s   %s\n", today, engine.PlanLine(cfg))
+	// 危险模式是「整套防护关着」，必须出现在每天第一眼看的地方，
+	// 而且这个文件里其他行说的是「跑得怎么样」，只有这一行说的是「怎么跑的」
+	if cfg.Danger() {
+		fmt.Printf("  ⚠ %s\n", config.DangerLine)
+	}
 	for _, t := range task.All {
 		ts := s.Tasks[t.Key]
 		mark, note := "·", "今天还没跑"
@@ -290,6 +296,10 @@ func cmdStatus(ctx context.Context, args []string) error {
 			}
 			note += "   " + st.RelTo(p)
 		}
+		// 这一档是不是无限制跑出来的——报告已经公开了，事后要能一眼看出来
+		if ts.Danger && ts.Date == today {
+			note += "（危险模式跑的）"
+		}
 		fmt.Printf("  %s %-9s %s  %s\n", mark, t.Key, t.At, note)
 	}
 	switch {
@@ -327,6 +337,15 @@ func cmdSandbox(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg, err := loadConfig(root)
+	if err != nil {
+		return err
+	}
+	if cfg.Danger() {
+		fmt.Printf("⚠ %s\n", config.DangerLine)
+		fmt.Println("  下面这份拒绝清单**不生效**。")
+		fmt.Println()
+	}
 	fmt.Println("拒绝读取的目录：")
 	for _, p := range sandbox.DenyDirs(home()) {
 		fmt.Println("  " + p)
@@ -335,12 +354,20 @@ func cmdSandbox(ctx context.Context, args []string) error {
 	for _, p := range sandbox.DenyFiles(home(), root) {
 		fmt.Println("  " + p)
 	}
-	b, err := sandbox.Settings(home(), root)
+	b, err := sandbox.Settings(home(), root, cfg.Danger())
 	if err != nil {
 		return err
 	}
-	fmt.Println("\nclaude 权限文件：")
+	mode := "claude 权限文件："
+	if cfg.Danger() {
+		mode = "claude 权限文件（危险模式，写到 state/agent-settings-danger.json）："
+	}
+	fmt.Println("\n" + mode)
 	fmt.Println(string(b))
+	if cfg.Danger() {
+		fmt.Println("codex 外层沙箱：危险模式下不套，跳过")
+		return nil
+	}
 	if w, err := sandbox.Wrapper(home(), root, "codex"); err == nil {
 		fmt.Printf("codex 外层沙箱：%s …\n", strings.Join(w[:min(3, len(w))], " "))
 	} else {

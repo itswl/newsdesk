@@ -25,6 +25,9 @@ type TaskState struct {
 type health struct {
 	Heartbeat      string `json:"heartbeat"`
 	HeartbeatEpoch int64  `json:"heartbeat_epoch"`
+	// 调度器当前跑不跑危险模式（DANGER=1）。带进 status.json，让站点和
+	// 外部监控也能看到「站上这份是无限制跑出来的」。
+	Danger bool `json:"danger,omitempty"`
 }
 
 type dayState struct {
@@ -121,13 +124,16 @@ func (b *Builder) tabStatus(t task.Task, path string, present bool, state map[st
 }
 
 type statusDoc struct {
-	Generated      string               `json:"generated"`
-	GeneratedEpoch int64                `json:"generated_epoch"`
-	Date           string               `json:"date"`
-	Heartbeat      string               `json:"heartbeat,omitempty"`
-	StaleHours     *float64             `json:"stale_hours"`
-	Tasks          map[string]statusRow `json:"tasks"`
-	OK             bool                 `json:"ok"`
+	Generated      string `json:"generated"`
+	GeneratedEpoch int64  `json:"generated_epoch"`
+	Date           string `json:"date"`
+	Heartbeat      string `json:"heartbeat,omitempty"`
+	// Danger 与 health.json 同源。放在 status.json 里是因为它是唯一能被外部
+	// 看到的出口：页面、Worker、任何轮询它的人都能知道当前这一份是怎么跑的。
+	Danger     bool                 `json:"danger,omitempty"`
+	StaleHours *float64             `json:"stale_hours"`
+	Tasks      map[string]statusRow `json:"tasks"`
+	OK         bool                 `json:"ok"`
 }
 
 type statusRow struct {
@@ -157,6 +163,7 @@ func (b *Builder) writeStatus() error {
 		GeneratedEpoch: now.Unix(),
 		Date:           now.Format("2006-01-02"),
 		Heartbeat:      h.Heartbeat,
+		Danger:         h.Danger,
 		Tasks:          map[string]statusRow{},
 	}
 	if h.HeartbeatEpoch > 0 {

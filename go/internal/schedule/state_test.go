@@ -62,7 +62,7 @@ func TestSaveIsAtomic(t *testing.T) {
 func TestHealthCarriesEpoch(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "health.json")
 	s := &State{Tasks: map[string]TaskState{"ai": {Date: "2026-09-17", Status: "ok"}}}
-	if err := WriteHealth(p, s, []string{"06:30 ai"}, nil, "test"); err != nil {
+	if err := WriteHealth(p, s, []string{"06:30 ai"}, nil, "test", false); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(p)
@@ -89,7 +89,7 @@ func TestHealthCarriesRunningTask(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "health.json")
 	s := &State{Tasks: map[string]TaskState{}}
 	since := time.Date(2026, 9, 28, 16, 40, 0, 0, time.Local)
-	if err := WriteHealth(p, s, []string{"16:40 trending"}, &Running{Key: "trending", Since: since}, "test"); err != nil {
+	if err := WriteHealth(p, s, []string{"16:40 trending"}, &Running{Key: "trending", Since: since}, "test", false); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ := os.ReadFile(p)
@@ -98,7 +98,7 @@ func TestHealthCarriesRunningTask(t *testing.T) {
 			t.Errorf("health.json 缺 %s：\n%s", k, raw)
 		}
 	}
-	if err := WriteHealth(p, s, []string{"16:40 trending"}, nil, "test"); err != nil {
+	if err := WriteHealth(p, s, []string{"16:40 trending"}, nil, "test", false); err != nil {
 		t.Fatal(err)
 	}
 	raw, _ = os.ReadFile(p)

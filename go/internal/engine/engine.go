@@ -37,12 +37,27 @@ type Runner struct {
 }
 
 // Run 把 prompt 交给引擎，输出直接流到 stdout/stderr（调用方已重定向到日志）。
+//
+// 危险模式（config 里的 DANGER=1）在这里生效：权限文件换成不设限制的那一份，
+// 去掉权限提示与 MCP 裁剪。判定从配置现取，所以同一个进程里跑不同配置的档
+// （调度器热重读）不会串。
 func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
+	danger := r.Cfg.Danger()
 	switch kind {
 	case Claude:
-		settings, err := sandbox.WriteSettings(r.Home, r.Root)
+		settings, err := sandbox.WriteSettings(r.Home, r.Root, danger)
 		if err != nil {
 			return fmt.Errorf("渲染权限文件: %w", err)
+		}
+		model := r.Cfg.Get("CLAUDE_MODEL", "claude-sonnet-5")
+		if danger {
+			// 危险模式：彻底不设限。--dangerously-skip-permissions 绕过一切权限检查，
+			// 权限文件里也把 disableBypassPermissionsMode 去掉了；同时**不再传
+			// --strict-mcp-config**——交互式会话里挂着的 MCP server 是独立进程、
+			// 不在这层沙箱里，默认要挡住的就是它们，而这里正是要放开。
+			return r.exec(ctx, nil, "claude", "-p",
+				"--model", model, "--settings", settings,
+				"--dangerously-skip-permissions", prompt)
 		}
 		// 不用 --dangerously-skip-permissions：那会绕过所有权限检查。
 		//
@@ -51,7 +66,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 		// network.allowedDomains: [] 对它完全无效——「分析层出不了网」这个前提
 		// 会被悄悄推翻，而它每天无人值守地读别人能写的文本。
 		return r.exec(ctx, nil, "claude", "-p",
-			"--model", r.Cfg.Get("CLAUDE_MODEL", "claude-sonnet-5"),
+			"--model", model,
 			"--settings", settings, "--permission-prompts", "none",
 			"--strict-mcp-config", prompt)
 
@@ -59,7 +74,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 		if err := r.Cfg.Require("FALLBACK_BASE_URL", "FALLBACK_AUTH_TOKEN", "FALLBACK_MODEL"); err != nil {
 			return err
 		}
-		settings, err := sandbox.WriteSettings(r.Home, r.Root)
+		settings, err := sandbox.WriteSettings(r.Home, r.Root, danger)
 		if err != nil {
 			return err
 		}
@@ -70,12 +85,24 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 			"ANTHROPIC_BASE_URL=" + base,
 			"ANTHROPIC_AUTH_TOKEN=" + r.Cfg.Get("FALLBACK_AUTH_TOKEN", ""),
 		}
+		model := r.Cfg.Get("FALLBACK_MODEL", "")
+		if danger {
+			return r.exec(ctx, env, "claude", "-p",
+				"--model", model, "--settings", settings,
+				"--dangerously-skip-permissions", prompt)
+		}
 		return r.exec(ctx, env, "claude", "-p",
-			"--model", r.Cfg.Get("FALLBACK_MODEL", ""),
+			"--model", model,
 			"--settings", settings, "--permission-prompts", "none",
 			"--strict-mcp-config", prompt)
 
 	case Codex:
+		if danger {
+			// 危险模式：不套外层沙箱，整个 codex 进程不受限
+			return r.exec(ctx, nil, "codex", "exec",
+				"-m", r.Cfg.Get("CODEX_MODEL", "gpt-5.6-luna"), "-C", r.Root,
+				"--dangerously-bypass-approvals-and-sandbox", "--color", "never", prompt)
+		}
 		wrap, err := sandbox.Wrapper(r.Home, r.Root, "codex")
 		if err != nil {
 			// 没有可用沙箱就拒绝：codex 自带的 workspace-write 不限制读，

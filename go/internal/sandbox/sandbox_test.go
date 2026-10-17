@@ -2,6 +2,7 @@ package sandbox
 
 import (
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,7 +10,20 @@ import (
 
 func settings(t *testing.T) map[string]any {
 	t.Helper()
-	b, err := Settings("/home/u", "/repo")
+	b, err := Settings("/home/u", "/repo", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+func dangerSettings(t *testing.T) map[string]any {
+	t.Helper()
+	b, err := Settings("/home/u", "/repo", true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,4 +117,59 @@ func toStrings(v any) []string {
 		out = append(out, x.(string))
 	}
 	return out
+}
+
+// 危险模式必须真的什么都不拦。
+//
+// 「开关打开了但没生效」是最坏的一种：以为在无限制地跑（结果还在被拦），或者
+// 反过来以为防护还在（其实全关了）。所以这里正向断言每一层都松开了。
+func TestDangerDropsEveryGuard(t *testing.T) {
+	m := dangerSettings(t)
+	sb, ok := m["sandbox"].(map[string]any)
+	if !ok {
+		t.Fatal("危险模式的权限文件里没有 sandbox 段")
+	}
+	for k, want := range map[string]bool{
+		"enabled": false, "failIfUnavailable": false, "allowUnsandboxedCommands": true,
+	} {
+		if sb[k] != want {
+			t.Errorf("危险模式的 sandbox.%s = %v，必须是 %v", k, sb[k], want)
+		}
+	}
+	perms := m["permissions"].(map[string]any)
+	if d, exists := perms["deny"]; exists {
+		t.Errorf("危险模式不该有任何 deny 规则，却拿到 %v", d)
+	}
+	if perms["blockReadsOutsideWorkingDirectories"] != false {
+		t.Error("危险模式必须允许读工作目录之外")
+	}
+	// 留着这个的话，bypassPermissions 会被命令行拒绝，症状是「以为绕过了其实没有」
+	if _, exists := perms["disableBypassPermissionsMode"]; exists {
+		t.Error("危险模式必须去掉 disableBypassPermissionsMode")
+	}
+	if perms["defaultMode"] != "bypassPermissions" {
+		t.Errorf("defaultMode = %v", perms["defaultMode"])
+	}
+}
+
+// 两份权限文件不能同名：同名的话切模式不会留下任何痕迹，
+// 而且「上一档是不是无限制跑的」事后查不出来。
+func TestWriteSettingsKeepsDangerSeparate(t *testing.T) {
+	root := t.TempDir()
+	safe, err := WriteSettings("/home/u", root, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	danger, err := WriteSettings("/home/u", root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if safe == danger {
+		t.Fatalf("两份权限文件同名：%s", safe)
+	}
+	for _, p := range []string{safe, danger} {
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("%s 没写出来：%v", p, err)
+		}
+	}
 }

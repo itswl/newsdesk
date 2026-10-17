@@ -279,3 +279,51 @@ func TestRunOnStaleConfigAsksForRepublish(t *testing.T) {
 		t.Errorf("值没变就没什么要重发的：changed=%v republish=%v", changed, g.l.republish)
 	}
 }
+
+// 危险模式开和关都要主动说一声，两个方向都发。
+//
+// 只在启动时报一次的话，热重读打开的那一次会静默生效——而它关掉的是整套防护
+// （沙箱、凭据拒读、发布前自检），跑出来的报告当天就公开发布。
+func TestDangerModeAlertsOnAndOff(t *testing.T) {
+	f := newConfFixture(t, "ENGINE=claude\n")
+	if f.l.Cfg.Danger() {
+		t.Fatal("默认必须是关着的")
+	}
+	f.write(f.conf("ENGINE=claude\nDANGER=1\n"))
+	if changed, err := f.settled(); !changed || err != nil {
+		t.Fatalf("应当重新读取：changed=%v err=%v", changed, err)
+	}
+	if !f.l.Cfg.Danger() {
+		t.Fatal("DANGER=1 没有生效")
+	}
+	if n := f.alerts.Load(); n != 1 {
+		t.Errorf("打开危险模式应当告警一次，现在 %d 次", n)
+	}
+
+	f.write(f.conf("ENGINE=claude\nDANGER=0\n"))
+	if changed, err := f.settled(); !changed || err != nil {
+		t.Fatalf("应当重新读取：changed=%v err=%v", changed, err)
+	}
+	if f.l.Cfg.Danger() {
+		t.Fatal("DANGER=0 没有生效")
+	}
+	if n := f.alerts.Load(); n != 2 {
+		t.Errorf("关掉也要说一声，累计应当 2 次，现在 %d 次", n)
+	}
+}
+
+// 认不出来的取值不能猜——猜「开着」是一整套防护静默关掉，猜「关着」是以为开着
+// 其实没开，两种都不报错。按坏配置处理：沿用上一份、告警一次、不中断调度。
+func TestBadDangerValueKeepsGuards(t *testing.T) {
+	f := newConfFixture(t, "ENGINE=claude\n")
+	f.write(f.conf("ENGINE=claude\nDANGER=maybe\n"))
+	if _, err := f.settled(); err == nil {
+		t.Fatal("认不出来的 DANGER 取值应当报错")
+	}
+	if f.l.Cfg.Danger() {
+		t.Error("读坏了绝不能把危险模式当成开着")
+	}
+	if n := f.alerts.Load(); n != 1 {
+		t.Errorf("应当告警一次（沿用上一份配置），现在 %d 次", n)
+	}
+}

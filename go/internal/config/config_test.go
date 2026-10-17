@@ -139,3 +139,46 @@ func TestListIgnoresBlanks(t *testing.T) {
 		t.Errorf("List = %#v", got)
 	}
 }
+
+// 危险模式默认必须是关着的：没写这个键就等于开着的话，装一台新机器、复制一份
+// 示例配置，防护会全部失效而没有任何迹象。
+func TestDangerDefaultsOff(t *testing.T) {
+	for _, body := range []string{"", "ENGINE=claude\n", "DANGER=\n", `DANGER=""` + "\n"} {
+		if load(t, body).Danger() {
+			t.Errorf("DANGER 未明确打开时必须是关着的：%q", body)
+		}
+	}
+	for _, body := range []string{"DANGER=1\n", "DANGER=on\n", "DANGER=YES\n"} {
+		if !load(t, body).Danger() {
+			t.Errorf("DANGER=%q 应该认出是开着", body)
+		}
+	}
+	for _, body := range []string{"DANGER=0\n", "DANGER=off\n", "DANGER=false\n"} {
+		if load(t, body).Danger() {
+			t.Errorf("DANGER=%q 应该认出是关着", body)
+		}
+	}
+}
+
+// 认不出来的取值必须报错，不能猜。猜「开着」= 防护全关，猜「关着」= 以为开着
+// 其实没开，两种都不报错。
+func TestDangerRejectsUnknownValue(t *testing.T) {
+	for _, v := range []string{"yes-please", "2", "danger", "tru"} {
+		_, err := Load(write(t, "ENGINE=claude\nDANGER="+v+"\n"))
+		if err == nil {
+			t.Errorf("DANGER=%s 应该报错", v)
+			continue
+		}
+		if !strings.Contains(err.Error(), "DANGER") {
+			t.Errorf("报错里应含键名：%v", err)
+		}
+	}
+	// 报错会进日志、会发到告警群，不回显值。
+	// ⚠️ 别拿 "2" 这类取值来验这一条：行号本身就是数字，会被误判成回显。
+	for _, v := range []string{"please-enable", "danger", "yes-please"} {
+		_, err := Load(write(t, "ENGINE=claude\nDANGER="+v+"\n"))
+		if err != nil && strings.Contains(err.Error(), v) {
+			t.Errorf("报错不该回显值 %q：%v", v, err)
+		}
+	}
+}
