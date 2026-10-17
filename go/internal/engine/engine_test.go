@@ -128,3 +128,53 @@ func TestDescribeFlagsMissingEndpoint(t *testing.T) {
 		t.Errorf("缺端点要报出来：%s", got)
 	}
 }
+
+// 分析层的工具面必须是钉死的。这串参数里每一条都是一个开关，写漏一条不会有任何
+// 报错——要么安静地多继承一层交互式会话的配置，要么安静地少一层防护。
+func TestClaudeArgsPinAnalysisLayer(t *testing.T) {
+	cfg := cfgOf(t, "CLAUDE_MODEL=claude-sonnet-5\nFALLBACK_MODEL=glm-5.3\n")
+
+	in := func(args []string, want string) bool {
+		for _, a := range args {
+			if a == want {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, kind := range []Kind{Claude, API} {
+		normal := claudeArgs(kind, cfg, "settings.json", "p", false)
+		// 钉工具面、不继承全局设置、MCP 照裁、权限提示照关
+		for _, want := range []string{
+			"--tools", toolsAllowed,
+			"--setting-sources",
+			"--strict-mcp-config", "--permission-prompts",
+		} {
+			if !in(normal, want) {
+				t.Errorf("%s 常规模式缺参数 %q：%v", kind, want, normal)
+			}
+		}
+		if in(normal, "--dangerously-skip-permissions") {
+			t.Errorf("%s 常规模式不该带 --dangerously-skip-permissions", kind)
+		}
+
+		// 危险模式反着来：不设限，一个都不留
+		danger := claudeArgs(kind, cfg, "settings.json", "p", true)
+		if !in(danger, "--dangerously-skip-permissions") {
+			t.Errorf("%s 危险模式缺 --dangerously-skip-permissions：%v", kind, danger)
+		}
+		for _, bad := range []string{"--tools", "--setting-sources", "--strict-mcp-config", "--permission-prompts"} {
+			if in(danger, bad) {
+				t.Errorf("%s 危险模式不该有 %q（那就不叫不设限了）", kind, bad)
+			}
+		}
+	}
+
+	// 干活的工具一个不能少：少了 Write 就出不了报告，少了 Bash 就没法核对数据
+	for _, want := range []string{"Read", "Write", "Edit", "Glob", "Grep", "Bash"} {
+		if !strings.Contains(toolsAllowed, want) {
+			t.Errorf("工具白名单里没有 %s", want)
+		}
+	}
+}
