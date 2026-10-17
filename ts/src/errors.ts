@@ -1,6 +1,3 @@
-import { langs, type Env } from './env.ts';
-
-const LABEL: Record<string, string> = { 'zh-CN': '简体', 'zh-TW': '繁體', en: 'English' };
 
 /**
  * 错误页要给出 content-type 与可读内容。
@@ -9,14 +6,10 @@ const LABEL: Record<string, string> = { 'zh-CN': '简体', 'zh-TW': '繁體', en
  * Workers 会补 text/plain，而纯文本页在部分浏览器与内嵌 WebView 里会被当附件
  * 下载；用户看到的也只有两个英文单词，不知道该往哪走。
  */
-export function errorPage(status: number, title: string, detail: string,
-                          env: Pick<Env, 'SITE_LANGS'>): Response {
-  // 语言入口跟着 SITE_LANGS 走，别写死三语——只发简体的站点上，
-  // 指向 /zh-TW/ 与 /en/ 的链接本身就是 404。第一个语言在根目录。
-  const codes = langs(env);
-  const links = codes.length > 1
-    ? codes.map((c, i) => `<a href="${i === 0 ? '/' : '/' + c + '/'}">${LABEL[c] || c}</a>`).join('')
-    : '<a href="/">返回首页 · Home</a>';
+export function errorPage(status: number, title: string, detail: string): Response {
+  // 只有「返回首页」：页面上的语言切换器 2026-10-18 去掉了，错误页再留一排语言
+  // 入口就是两套口径。三种语言仍各自发布、hreflang 互链照旧，只是不给入口。
+  const links = '<a href="/">返回首页 · Home</a>';
 
   const body = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">

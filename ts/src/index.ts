@@ -27,7 +27,7 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   if (u.pathname.startsWith('/push/')) return pushRoute(request, env, u);
 
   if (request.method !== 'GET' && request.method !== 'HEAD') {
-    const r = errorPage(405, '方法不被允许 · Method not allowed', 'GET / HEAD only.', env);
+    const r = errorPage(405, '方法不被允许 · Method not allowed', 'GET / HEAD only.');
     r.headers.set('Allow', 'GET, HEAD');
     return r;
   }
@@ -35,7 +35,7 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   const path = normalize(u.pathname);
   if (!allowed(path)) {
     return errorPage(404, '页面不存在 · Page not found',
-      '这个地址不在本站的产出范围内。 This path is not served by this site.', env);
+      '这个地址不在本站的产出范围内。 This path is not served by this site.');
   }
 
   const name = path.slice(1);
@@ -50,9 +50,9 @@ export async function handle(request: Request, env: Env): Promise<Response> {
   if (!res.ok) {
     return res.status === 404
       ? errorPage(404, '页面不存在 · Page not found',
-          '这一天可能已超出保留期。 This day may be outside the retention window.', env)
+          '这一天可能已超出保留期。 This day may be outside the retention window.')
       : errorPage(502, '上游暂时不可用 · Upstream unavailable',
-          '对象存储没有正常响应，稍后再试。 Object storage did not respond; please retry.', env);
+          '对象存储没有正常响应，稍后再试。 Object storage did not respond; please retry.');
   }
 
   const h = new Headers(res.headers);

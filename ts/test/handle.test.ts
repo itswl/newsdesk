@@ -4,7 +4,6 @@ import { handle } from '../src/index.ts';
 
 const ENV = {
   OCI_REGION: 'us-phoenix-1', OCI_NAMESPACE: 'ns', OCI_BUCKET: 'site',
-  SITE_LANGS: 'zh-CN,zh-TW,en',
 };
 
 const realFetch = globalThis.fetch;
