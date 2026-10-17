@@ -1,5 +1,10 @@
 // 测试共用的替身。以前 FakeKV 在两个测试文件里各抄一份，已经长歪了（一份会计数、一份不会）。
 import { existsSync, readFileSync } from 'node:fs';
+// ⚠️ 用 fileURLToPath 而不是把 URL 直接交给 fs：@cloudflare/workers-types 也声明了
+// 一个全局 URL，它的 searchParams 迭代器类型与 node:url 的不兼容，TS 7 下会把
+// new URL() 认成前者，于是 existsSync/readFileSync 全部报「不是 PathLike」。
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { b64uEncode } from '../src/push.ts';
 import type { Env } from '../src/env.ts';
 
@@ -89,7 +94,9 @@ export async function withFetch<T>(fake: (url: string, init?: RequestInit) => Pr
 // 三种写法：每 N 分钟（星号斜杠 N）、每小时第 M 分钟、每 H 小时的第 M 分钟。认不出就抛，
 // 让人来改这里，不猜。文件不存在返回 null：wrangler.toml 不进版本控制，换台机器可能没有。
 export function cronOf(file: string): { expr: string; intervalMs: number; offsetMs: number } | null {
-  const path = new URL(`../${file}`, import.meta.url);
+  // 不用 new URL()：全局 URL 被 workers-types 声明成另一个形状，TS 7 下与 node 的
+  // 不兼容。拿 import.meta.url 这个字符串转成目录再拼，绕开整个类型冲突。
+  const path = join(dirname(fileURLToPath(import.meta.url)), '..', file);
   if (!existsSync(path)) return null;
   const expr = /^crons\s*=\s*\[\s*"([^"]+)"\s*\]/m.exec(readFileSync(path, 'utf8'))?.[1];
   if (!expr) throw new Error(`${file} 里没有单条 cron`);

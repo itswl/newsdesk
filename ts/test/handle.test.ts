@@ -30,13 +30,13 @@ function get(path: string, method = 'GET') {
 test('根路径回源取 index.html', async () => {
   const r = await get('/');
   assert.equal(r.status, 200);
-  assert.ok(seen[0]!.endsWith('/o/index.html'), seen[0]);
+  assert.ok(seen[0]!.endsWith('/o/index.html'), String(seen[0]));
   assert.equal(r.headers.get('content-type'), 'text/html; charset=utf-8');
 });
 
 test('语言子目录正常回源', async () => {
   await get('/en/2026-09-17.html');
-  assert.ok(seen[0]!.includes('en%2F2026-09-17.html'), seen[0]);
+  assert.ok(seen[0]!.includes('en%2F2026-09-17.html'), String(seen[0]));
 });
 
 // 不在产出范围内的路径根本不该打到桶上
