@@ -93,7 +93,7 @@ h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:
 .tab:hover{background:var(--bg3);color:var(--fgh2)}
 .tab em{font-style:normal;font-size:11px;opacity:.85;background:rgba(255,255,255,.2);
   padding:1px 6px;border-radius:5px}
-/* 全称 .l 与短名 .s 都在 HTML 里，按屏宽只显示一个（与 .lang 同一手法） */
+/* 全称 .l 与短名 .s 都在 HTML 里，按屏宽只显示一个（与 tab 的短名同一手法） */
 .tab .s{display:none;font-style:normal}
 /* 任务状态并在 tab 上：状态条和 tab 本是同一份四任务清单，写两遍在手机上白占一行。
    缺报告的档只是灰字，不划删除线——一天里大部分时间它们只是还没到点，不是失败，
@@ -107,7 +107,7 @@ h1.site{margin:0;font-size:16px;font-weight:600;color:var(--fgh);letter-spacing:
 /* 触屏三点：:hover 在手机上要么不触发、要么触发后粘住不消失，所以补一个显式的
    按下态；iOS 默认那层半透明高亮压在按钮上会把文字糊掉，去掉；touch-action
    消掉双击缩放的等待，快速连点两个 Tab 不会再吞掉第一次。 */
-.tab,.nav a,.tools button.tg,.tools .lang a,.nav select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
+.tab,.nav a,.tools button.tg,.nav select{-webkit-tap-highlight-color:transparent;touch-action:manipulation}
 .tab:not(.on):active,.nav a:active,.tools button.tg:active{background:var(--bg4)}
 
 /* 跳转反馈：换天/选日期先压暗正文再跳。线路慢时（边缘几秒不回包）给出
@@ -223,16 +223,6 @@ html[lang="en"] .pane blockquote{max-width:34em}
 html[lang="en"] h1{letter-spacing:-.01em}
 html[lang="en"] h2,html[lang="en"] h3{letter-spacing:-.005em}
 
-/* 语言切换：一个框里三段，不是三个独立按钮。除了视觉上是一个整体，也更窄——
-   省掉了三份外边距与按钮之间的间隙。当前语言不是链接，避免自己链自己。 */
-.lang{display:inline-flex;align-items:stretch;
-  border:1px solid var(--bd2);border-radius:7px;overflow:hidden;background:var(--bg2)}
-.lang i{display:none;font-style:normal}          /* 缩写，窄屏才出来 */
-.lang a,.lang span{display:flex;align-items:center;padding:5px 9px;font-size:12.5px;
-  line-height:1;color:var(--fg3);white-space:nowrap;border-left:1px solid var(--bd2)}
-.lang a:first-child,.lang span:first-child{border-left:0}
-.lang a:hover{background:var(--bg3);color:var(--fg)}
-.lang span.on{color:var(--fgh);background:var(--bg4);font-weight:600}
 .keep{margin:0 0 20px;padding:9px 13px;border-left:2px solid var(--quote-bd);
   background:var(--bg5);color:var(--fg2);font-size:13.5px;line-height:1.7;border-radius:0 4px 4px 0}
 footer.dis .keep{margin:0 0 12px;background:none;padding:0 0 0 11px}
@@ -255,10 +245,6 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
   h1.site{font-size:14.5px;flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .tools{order:1;margin-left:auto}
   .nav{order:2;margin-left:0;width:100%;gap:6px}
-  /* 窄屏换成缩写：简/繁/EN 约 66px，完整标签要 142px。 */
-  .lang{flex:0 0 auto;align-self:stretch}
-  .lang b{display:none}
-  .lang i{display:inline}
   /* 44px 是 Apple 给的最小点按尺寸（原来是 38px）。日期导航与 Tab 是手机上仅有的
      高频操作，多占这 6px 换的是不再点空。 */
   .nav a,.nav span.dis{flex:1;text-align:center;padding:9px 6px;
@@ -314,7 +300,6 @@ footer.dis .gen{margin:8px 0 0;opacity:.55;font-size:12px}
      133 涨到 178px）。相邻日期在下拉里看得到，不算信息丢失。 */
   .nav a em{display:none}
   .nav select{flex:1.6 1 76px;min-width:76px}
-  .lang a,.lang span{padding:5px 7px;font-size:11.5px}
   .nav a.all{padding:9px 9px}
   .tools button.tg{padding:9px 8px}
   table{font-size:12px}

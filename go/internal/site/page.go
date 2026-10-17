@@ -143,35 +143,6 @@ func (b *Builder) headLinks(page string) string {
 	return sb.String()
 }
 
-// langSwitch 语言切换器：一个框里三段，不是三个独立按钮。
-// 除了视觉上是整体，也更窄——省掉三份外边距与按钮间的间隙。
-// 全称与缩写都输出，由 CSS 按屏宽切换：同一份 HTML 两种宽度都对。
-func (b *Builder) langSwitch(page string) string {
-	if len(b.o.AllLangs) < 2 {
-		return ""
-	}
-	up := ""
-	if b.o.Lang != b.rootLang {
-		up = "../"
-	}
-	var sb strings.Builder
-	fmt.Fprintf(&sb, `<span class="lang" title="%s">`, esc(b.T("nav.lang")))
-	for _, l := range b.o.AllLangs {
-		txt := fmt.Sprintf(`<b>%s</b><i>%s</i>`, esc(i18n.Label[l]), esc(i18n.Abbr[l]))
-		if l == b.o.Lang {
-			fmt.Fprintf(&sb, `<span class="on">%s</span>`, txt)
-			continue
-		}
-		href := up
-		if l != b.rootLang {
-			href += string(l) + "/"
-		}
-		fmt.Fprintf(&sb, `<a href="%s%s">%s</a>`, href, page, txt)
-	}
-	sb.WriteString("</span>")
-	return sb.String()
-}
-
 func (b *Builder) nav(day string) string {
 	i := indexOf(b.days, day)
 	prev := fmt.Sprintf(`<span class="dis" title="%s">%s</span>`,
@@ -217,10 +188,11 @@ func (b *Builder) nav(day string) string {
 		prev, esc(b.T("nav.date_label")), opts.String(), next, esc(b.T("nav.all", len(b.days))))
 }
 
-// tools 语言切换与主题按钮，放在标题那一行的右侧（见 nav 的说明）。
-func (b *Builder) tools(page string) string {
-	return fmt.Sprintf(`<div class="tools">%s<button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div>`,
-		b.langSwitch(page), esc(b.T("nav.theme")), esc(b.T("nav.theme_label")))
+// tools 标题那一行右侧的工具。现在只剩主题按钮：语言切换已经去掉，
+// 三种语言的页面仍然各自生成、hreflang 互链照旧，只是页面上不再给入口。
+func (b *Builder) tools() string {
+	return fmt.Sprintf(`<div class="tools"><button class="tg" id="theme" title="%s" aria-label="%s" aria-pressed="false">☀</button></div>`,
+		esc(b.T("nav.theme")), esc(b.T("nav.theme_label")))
 }
 
 // skipLink 键盘与读屏用户跳过页头：进正文前有九个可聚焦控件，每翻一天都要
@@ -337,7 +309,7 @@ func (b *Builder) writeDay(day string) error {
 		`<main id="main" tabindex="-1">%s`+
 		`<footer class="dis">%s%s%s</footer></main><script>%s</script></body></html>`,
 		i18n.HTMLLang(b.o.Lang), esc(title), b.headMeta(title, page), b.headIcons(), b.headLinks(page), headJS, css,
-		b.skipLink(), esc(b.T("site.name")), day, latest, b.nav(day), b.tools(page),
+		b.skipLink(), esc(b.T("site.name")), day, latest, b.nav(day), b.tools(),
 		esc(b.T("nav.tabs_label")), tabs.String(), panes.String(), note, b.pushToggle(), b.disclaimer(), js)
 
 	return os.WriteFile(filepath.Join(b.o.Out, page), []byte(doc), 0o644)
@@ -409,7 +381,7 @@ func (b *Builder) writeArchive() error {
 		i18n.HTMLLang(b.o.Lang), esc(title), b.headMeta(title, "archive.html"),
 		b.headIcons(), b.headLinks("archive.html"), headJS, css,
 		b.skipLink(), esc(title), esc(scope), esc(b.T("arch.days", len(b.days))),
-		esc(b.T("nav.back", b.days[len(b.days)-1])), b.tools("archive.html"),
+		esc(b.T("nav.back", b.days[len(b.days)-1])), b.tools(),
 		note, esc(b.T("arch.date")), esc(b.T("arch.reports")), rows.String(),
 		b.disclaimer(), b.genNote(), js)
 	return os.WriteFile(filepath.Join(b.o.Out, "archive.html"), []byte(doc), 0o644)

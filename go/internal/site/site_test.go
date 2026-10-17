@@ -352,21 +352,6 @@ func TestEmptyReportsIsAnError(t *testing.T) {
 	}
 }
 
-// 只有一个语言时不显示切换器：一个孤零零的按钮只是占地方。
-func TestLangSwitcherOnlyWhenMultiple(t *testing.T) {
-	root := fixture(t, "2026-09-17")
-	one := read(t, filepath.Join(build(t, Options{Root: root,
-		AllLangs: []i18n.Lang{i18n.ZhCN}}), "index.html"))
-	many := read(t, filepath.Join(build(t, Options{Root: root,
-		AllLangs: []i18n.Lang{i18n.ZhCN, i18n.ZhTW, i18n.En}}), "index.html"))
-	if strings.Contains(one, "繁體") {
-		t.Fatal("只有一个语言时不该出现切换器")
-	}
-	if !strings.Contains(many, "繁體") || !strings.Contains(many, "English") {
-		t.Fatal("多语言时应出现完整切换器")
-	}
-}
-
 // 英文是后加的，早期那些天没有译文。不按语言筛天数的话会生成一堆只有导航和
 // 页脚、正文为空的壳页面——21 KB，从归档点进去什么都没有，也不解释为什么。
 func TestLanguageWithoutReportsSkipsThoseDays(t *testing.T) {
