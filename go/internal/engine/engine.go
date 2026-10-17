@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 
 	"github.com/itswl/newsdesk/internal/config"
 	"github.com/itswl/newsdesk/internal/sandbox"
@@ -60,7 +61,8 @@ func claudeArgs(kind Kind, cfg *config.Config, settings, prompt string, danger b
 		// 危险模式不设限：不钉工具面、不裁 MCP、也不砍设置来源——交互式会话里的
 		// 全局 MCP server 与技能正是「不限制能力」的一部分。
 		return []string{"-p", "--model", model, "--settings", settings,
-			"--dangerously-skip-permissions", prompt}
+			"--dangerously-skip-permissions",
+			"--output-format", "stream-json", "--verbose", prompt}
 	}
 	return []string{"-p", "--model", model, "--settings", settings,
 		"--permission-prompts", "none",
@@ -71,7 +73,10 @@ func claudeArgs(kind Kind, cfg *config.Config, settings, prompt string, danger b
 		// ⚠️ --settings 指定的是「additional settings」，不受这条影响：下面那份
 		// 权限文件（含凭据拒读）照常生效，实测 deny 规则仍是 49 条。
 		"--setting-sources", "",
-		"--strict-mcp-config", prompt}
+		"--strict-mcp-config",
+		// 流式 JSON 是为了拿 token 统计（in/out/cache）。renderStream 负责把它还原
+		// 成人看的日志，所以日志形状不变。
+		"--output-format", "stream-json", "--verbose", prompt}
 }
 
 // Run 把 prompt 交给引擎，输出直接流到 stdout/stderr（调用方已重定向到日志）。
@@ -87,7 +92,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 		if err != nil {
 			return fmt.Errorf("渲染权限文件: %w", err)
 		}
-		return r.exec(ctx, nil, "claude", claudeArgs(Claude, r.Cfg, settings, prompt, danger)...)
+		return r.execStream(ctx, nil, claudeArgs(Claude, r.Cfg, settings, prompt, danger)...)
 
 	case API:
 		if err := r.Cfg.Require("FALLBACK_BASE_URL", "FALLBACK_AUTH_TOKEN", "FALLBACK_MODEL"); err != nil {
@@ -104,7 +109,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 			"ANTHROPIC_BASE_URL=" + base,
 			"ANTHROPIC_AUTH_TOKEN=" + r.Cfg.Get("FALLBACK_AUTH_TOKEN", ""),
 		}
-		return r.exec(ctx, env, "claude", claudeArgs(API, r.Cfg, settings, prompt, danger)...)
+		return r.execStream(ctx, env, claudeArgs(API, r.Cfg, settings, prompt, danger)...)
 
 	case Codex:
 		if danger {
@@ -130,6 +135,58 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 	}
 }
 
+// lockedWriter 把写入串起来。
+//
+// ⚠️ execStream 有两条路往同一个 writer 写：stderr 由 os/exec 自己拷，stdout 由
+// renderStream 解析后写。两者并发，而 bytes.Buffer、ring buffer、MultiWriter 都
+// 不是并发安全的——实测丢过一整行模型输出（日志里只剩 stderr 和用量行）。
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
+}
+
+// execStream 跑 claude 并把 stream-json 还原成可读日志，末尾补一行用量。
+func (r *Runner) execStream(ctx context.Context, extraEnv []string, args ...string) error {
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = r.Root
+	cmd.Env = append(os.Environ(), extraEnv...)
+	out := r.Out
+	if out == nil {
+		out = os.Stdout
+	}
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	lw := &lockedWriter{w: out}
+	// stderr 直接进日志：模型告警、连接提示都在这儿
+	cmd.Stderr = lw
+	cmd.Stdin = nil
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	u, rerr := renderStream(pipe, lw)
+	werr := cmd.Wait()
+	if u.Known {
+		fmt.Fprintln(lw, u.String())
+	}
+	if werr != nil {
+		return werr
+	}
+	if rerr != nil {
+		// 输出解析不动但进程正常退出：不因此判失败（报告可能已经写好），
+		// 但要留痕——不然「用量一直是 0」会没人发现
+		fmt.Fprintf(lw, "!! 输出解析中断（%v），用量可能不准\n", rerr)
+	}
+	return nil
+}
+
 func (r *Runner) exec(ctx context.Context, extraEnv []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = r.Root
@@ -145,22 +202,28 @@ func (r *Runner) exec(ctx context.Context, extraEnv []string, name string, args 
 
 // Classify 把失败信息归类。
 //
-// 有三类失败**重试帮不上忙**，共同点是「等几分钟再来一次必然还是失败」，
+// 有四类失败**重试帮不上忙**，共同点是「等几分钟再来一次必然还是失败」，
 // 但处置提示不一样，所以分开认——余额不足被报成配额耗尽的话，提示会是
-// 「等窗口重置」，而那是永远等不到的。
+// 「等窗口重置」，而那是永远等不到的。内容审核同理：同一份输入再发一遍还是被拒。
 type Failure string
 
 const (
 	FailQuota   Failure = "quota"   // 订阅配额：窗口没重置
 	FailBalance Failure = "balance" // 按量付费没钱了
 	FailAuth    Failure = "auth"    // key 过期/撤销/写错
-	FailOther   Failure = "other"
+	// FailModeration 供应商把这次生成判为敏感。它不是我们的错，也不是重试能解决的：
+	// 2026-10-17 21:45 那档 momoyu 就是被智谱这样拒了三次（400 [1301]），
+	// 而当时的告警只写了「原因：失败」——因为这一类没被认出来。
+	FailModeration Failure = "moderation"
+	FailOther      Failure = "other"
 )
 
 var hints = map[Failure][2]string{
 	FailQuota:   {"配额耗尽", "主引擎的用量窗口还没重置。等窗口，或把 ENGINE 换成额度更宽的那个。"},
 	FailBalance: {"余额不足", "按量付费那边没钱了或触发了计费限制。去供应商后台充值/提额，这个靠等是不会好的。"},
 	FailAuth:    {"凭据失效", "key 过期、被撤销或写错了。检查 config.conf 里的 FALLBACK_AUTH_TOKEN，重试帮不上忙。"},
+	FailModeration: {"内容审核拒绝", "供应商把这次生成判成敏感内容了，同一份输入重试还是会被拒。" +
+		"等主引擎的窗口重置，或换一个内容策略不同的兜底。"},
 }
 
 func (f Failure) Hint() (label, action string) {
@@ -181,6 +244,13 @@ func Classify(out string) Failure {
 			}
 		}
 		return false
+	}
+	// 内容审核先认：这类报错里常夹着 "400"、"invalid" 之类的词，落到下面任何一类
+	// 都会给出错的处置提示（比如让人去等窗口重置）。
+	if has("[1301]", "系统检测到输入或生成内容", "敏感内容",
+		"content_filter", "content policy", "content_moderation", "content moderation",
+		"safety system") {
+		return FailModeration
 	}
 	if has("insufficient balance", "insufficient funds", "insufficient credit",
 		"insufficient quota", "payment required", "billing", "arrears",

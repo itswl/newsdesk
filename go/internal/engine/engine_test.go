@@ -1,9 +1,11 @@
 package engine
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/itswl/newsdesk/internal/config"
@@ -38,9 +40,13 @@ func TestClassify(t *testing.T) {
 		"401 Unauthorized":           FailAuth,
 		"Failed to authenticate: OAuth session expired and could not be refreshed":  FailAuth,
 		"Your organization has disabled Claude subscription access for Claude Code": FailAuth,
-		"FileNotFoundError: data/x.json":                                            FailOther,
-		"connection reset by peer":                                                  FailOther,
-		"":                                                                          FailOther,
+		// 供应商内容审核：2026-10-17 21:45 那档 momoyu 的真实报错
+		`API Error: 400 [1301][系统检测到输入或生成内容可能包含不安全或敏感内容，请您避免输入易产生敏感内容的提示语，感谢您的配合。][20261017220202b27a8e82dd194ed3]`: FailModeration,
+		"content_filter triggered by the provider": FailModeration,
+		"Generation stopped by our safety system":  FailModeration,
+		"FileNotFoundError: data/x.json":           FailOther,
+		"connection reset by peer":                 FailOther,
+		"":                                         FailOther,
 	}
 	for in, want := range cases {
 		if got := Classify(in); got != want {
@@ -58,7 +64,7 @@ func TestBalanceWinsOverQuota(t *testing.T) {
 }
 
 func TestEveryFailureHasActionableHint(t *testing.T) {
-	for _, f := range []Failure{FailQuota, FailBalance, FailAuth} {
+	for _, f := range []Failure{FailQuota, FailBalance, FailAuth, FailModeration} {
 		label, action := f.Hint()
 		if label == "" || len(action) < 15 {
 			t.Errorf("%s 的提示说不清该做什么: %q / %q", f, label, action)
@@ -176,5 +182,110 @@ func TestClaudeArgsPinAnalysisLayer(t *testing.T) {
 		if !strings.Contains(toolsAllowed, want) {
 			t.Errorf("工具白名单里没有 %s", want)
 		}
+	}
+}
+
+// 「400 + 敏感内容」必须认成审核，而不是落到 other 去重试三次。
+// 这一条也顺带钉住顺序：审核的报错里有 400，先认配额/凭据都会给出错的提示。
+func TestModerationWinsOverQuota(t *testing.T) {
+	in := `API Error: 400 [1301][系统检测到输入或生成内容可能包含不安全或敏感内容][abc]`
+	if got := Classify(in); got != FailModeration {
+		t.Fatalf("= %q，应为 moderation", got)
+	}
+	if got := Classify("rate limit exceeded while generating sensitive content"); got != FailQuota {
+		t.Errorf("普通的限流不该被认成审核：%q", got)
+	}
+}
+
+// 用量行：数字要对，没取到的时候不能假装是 0。
+func TestUsageLine(t *testing.T) {
+	u := Usage{Input: 17431, Output: 4567, CacheRead: 90123, CacheWrite: 0, Turns: 18, CostUSD: 0.0421, Known: true}
+	s := u.String()
+	for _, want := range []string{"17,431", "4,567", "90,123", "18 轮", "$0.0421"} {
+		if !strings.Contains(s, want) {
+			t.Errorf("用量行缺 %q：%s", want, s)
+		}
+	}
+	if !strings.Contains(Usage{}.String(), "没取到") {
+		t.Error("拿不到用量时必须说「没取到」，不能打 0")
+	}
+}
+
+// 流式 JSON 要还原成人看的日志，同时把用量取出来。
+// 这里用两组真实的观测数据：一次成功、一次配额失败（失败时 stderr 是空的，
+// 错误正文只在 result 里——不打出来 Classify 就成了瞎子）。
+func TestRenderStream(t *testing.T) {
+	okJSONL := `{"type":"system","subtype":"init","tools":["Read"]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"第一段话"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"好的。"}]}}
+{"type":"result","is_error":false,"num_turns":3,"total_cost_usd":0.0013,"result":"好的。","usage":{"input_tokens":243,"output_tokens":4,"cache_read_input_tokens":1344,"cache_creation_input_tokens":7,"output_tokens_details":{"thinking_tokens":2}}}
+`
+	var b strings.Builder
+	u, err := renderStream(strings.NewReader(okJSONL), &b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := b.String()
+	if !strings.Contains(out, "第一段话") || !strings.Contains(out, "好的。") {
+		t.Errorf("模型的话没有原样落到日志：%s", out)
+	}
+	if strings.Count(out, "好的。") != 1 {
+		t.Errorf("成功时 result 是最后一段的副本，不该重复打：%s", out)
+	}
+	if !u.Known || u.Input != 243 || u.Output != 4 || u.CacheRead != 1344 || u.CacheWrite != 7 || u.Turns != 3 {
+		t.Errorf("用量取错：%+v", u)
+	}
+
+	failJSONL := `{"type":"rate_limit_event"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"You've hit your weekly limit · resets Oct 19 at 9am"}]},"error":"rate_limit"}
+{"type":"result","is_error":true,"num_turns":1,"total_cost_usd":0,"result":"You've hit your weekly limit · resets Oct 19 at 9am","usage":{"input_tokens":0,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+`
+	b.Reset()
+	if _, err := renderStream(strings.NewReader(failJSONL), &b); err != nil {
+		t.Fatal(err)
+	}
+	out = b.String()
+	if strings.Count(out, "weekly limit") != 1 {
+		t.Errorf("错误正文应当恰好出现一次（assistant 和 result 是同一句）：%s", out)
+	}
+	if got := Classify(out); got != FailQuota {
+		t.Errorf("还原出来的日志要能被 Classify 认出来，现在 = %q", got)
+	}
+}
+
+// 解析不动时不能吞输出：剩下的字节要照打，因为「为什么失败」可能就在里面。
+func TestRenderStreamKeepsGarbage(t *testing.T) {
+	in := "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"开头\"}]}}\n这不是 JSON\n"
+	var b strings.Builder
+	if _, err := renderStream(strings.NewReader(in), &b); err == nil {
+		t.Error("应当报解析错误")
+	}
+	if !strings.Contains(b.String(), "这不是 JSON") {
+		t.Errorf("非 JSON 的尾部被吞了：%s", b.String())
+	}
+}
+
+// execStream 的两条路（解析后的 stdout、os/exec 拷来的 stderr）会并发写同一个
+// writer。实测丢过一整行输出，所以必须串起来——这里只是把「同时写不丢不串」钉住。
+func TestLockedWriterSerializes(t *testing.T) {
+	var buf bytes.Buffer
+	lw := &lockedWriter{w: &buf}
+	var wg sync.WaitGroup
+	const n, size = 32, 200
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				if _, err := lw.Write(bytes.Repeat([]byte("x"), size)); err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if want := n * 20 * size; buf.Len() != want {
+		t.Errorf("写了 %d 字节，应为 %d——并发写丢东西了", buf.Len(), want)
 	}
 }

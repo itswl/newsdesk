@@ -39,7 +39,8 @@ func retryDelay(attempt int) time.Duration {
 }
 
 func giveUp(f engine.Failure) bool {
-	return f == engine.FailQuota || f == engine.FailBalance || f == engine.FailAuth
+	return f == engine.FailQuota || f == engine.FailBalance || f == engine.FailAuth ||
+		f == engine.FailModeration
 }
 
 // Decide 判断某一档现在该不该跑。
