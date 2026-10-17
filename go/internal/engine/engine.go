@@ -36,11 +36,49 @@ type Runner struct {
 	Out        io.Writer // 引擎输出去向；nil = os.Stdout
 }
 
+// toolsAllowed 分析层允许用到的工具，显式列出来把工具面钉死。
+//
+// 不钉的话工具面是会漂的：交互式会话的全局设置里开着 ENABLE_TOOL_SEARCH（动态
+// 工具加载），而网关不是 Anthropic 第一方，初始工具面里文件工具可能根本不出现。
+// 实测 10-15 那档豆瓣就是这么交的白卷——模型自述「有联网工具、没有文件工具」，
+// 白跑 2m57s 靠重试才补上。
+//
+// 只给分析真正用得上的：读数据、写报告、必要时跑个脚本核对。
+const toolsAllowed = "Read,Write,Edit,Glob,Grep,Bash"
+
+// claudeArgs 拼 claude CLI 的命令行。
+//
+// 单独拎出来是为了能测：这串参数里每一条都是一个开关，写漏一条不会有任何报错，
+// 只会安静地少一层防护或多继承一层配置。
+func claudeArgs(kind Kind, cfg *config.Config, settings, prompt string, danger bool) []string {
+	def, key := "claude-sonnet-5", "CLAUDE_MODEL"
+	if kind == API {
+		def, key = "", "FALLBACK_MODEL"
+	}
+	model := cfg.Get(key, def)
+	if danger {
+		// 危险模式不设限：不钉工具面、不裁 MCP、也不砍设置来源——交互式会话里的
+		// 全局 MCP server 与技能正是「不限制能力」的一部分。
+		return []string{"-p", "--model", model, "--settings", settings,
+			"--dangerously-skip-permissions", prompt}
+	}
+	return []string{"-p", "--model", model, "--settings", settings,
+		"--permission-prompts", "none",
+		"--tools", toolsAllowed,
+		// 不加载 user/project/local 三处设置。加载的话会连带继承交互式会话的全局
+		// env（ENABLE_TOOL_SEARCH 打开动态工具加载、agent teams 多出一批工具）、
+		// 11 个技能与已装插件——实测每次调用输入多约 65%（17,431 → 6,171 token）。
+		// ⚠️ --settings 指定的是「additional settings」，不受这条影响：下面那份
+		// 权限文件（含凭据拒读）照常生效，实测 deny 规则仍是 49 条。
+		"--setting-sources", "",
+		"--strict-mcp-config", prompt}
+}
+
 // Run 把 prompt 交给引擎，输出直接流到 stdout/stderr（调用方已重定向到日志）。
 //
 // 危险模式（config 里的 DANGER=1）在这里生效：权限文件换成不设限制的那一份，
-// 去掉权限提示与 MCP 裁剪。判定从配置现取，所以同一个进程里跑不同配置的档
-// （调度器热重读）不会串。
+// 去掉权限提示、工具白名单与 MCP 裁剪。判定从配置现取，所以同一个进程里跑不同
+// 配置的档（调度器热重读）不会串。
 func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 	danger := r.Cfg.Danger()
 	switch kind {
@@ -49,26 +87,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 		if err != nil {
 			return fmt.Errorf("渲染权限文件: %w", err)
 		}
-		model := r.Cfg.Get("CLAUDE_MODEL", "claude-sonnet-5")
-		if danger {
-			// 危险模式：彻底不设限。--dangerously-skip-permissions 绕过一切权限检查，
-			// 权限文件里也把 disableBypassPermissionsMode 去掉了；同时**不再传
-			// --strict-mcp-config**——交互式会话里挂着的 MCP server 是独立进程、
-			// 不在这层沙箱里，默认要挡住的就是它们，而这里正是要放开。
-			return r.exec(ctx, nil, "claude", "-p",
-				"--model", model, "--settings", settings,
-				"--dangerously-skip-permissions", prompt)
-		}
-		// 不用 --dangerously-skip-permissions：那会绕过所有权限检查。
-		//
-		// --strict-mcp-config 不是可选的：没有它，分析层会继承交互式会话里的
-		// 全局 MCP server。MCP server 是独立进程、不在这层沙箱里，所以
-		// network.allowedDomains: [] 对它完全无效——「分析层出不了网」这个前提
-		// 会被悄悄推翻，而它每天无人值守地读别人能写的文本。
-		return r.exec(ctx, nil, "claude", "-p",
-			"--model", model,
-			"--settings", settings, "--permission-prompts", "none",
-			"--strict-mcp-config", prompt)
+		return r.exec(ctx, nil, "claude", claudeArgs(Claude, r.Cfg, settings, prompt, danger)...)
 
 	case API:
 		if err := r.Cfg.Require("FALLBACK_BASE_URL", "FALLBACK_AUTH_TOKEN", "FALLBACK_MODEL"); err != nil {
@@ -85,16 +104,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 			"ANTHROPIC_BASE_URL=" + base,
 			"ANTHROPIC_AUTH_TOKEN=" + r.Cfg.Get("FALLBACK_AUTH_TOKEN", ""),
 		}
-		model := r.Cfg.Get("FALLBACK_MODEL", "")
-		if danger {
-			return r.exec(ctx, env, "claude", "-p",
-				"--model", model, "--settings", settings,
-				"--dangerously-skip-permissions", prompt)
-		}
-		return r.exec(ctx, env, "claude", "-p",
-			"--model", model,
-			"--settings", settings, "--permission-prompts", "none",
-			"--strict-mcp-config", prompt)
+		return r.exec(ctx, env, "claude", claudeArgs(API, r.Cfg, settings, prompt, danger)...)
 
 	case Codex:
 		if danger {

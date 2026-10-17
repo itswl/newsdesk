@@ -68,6 +68,14 @@ func Settings(home, root string, danger bool) ([]byte, error) {
 		"disableAllHooks":        true,
 		"autoMemoryEnabled":      false,
 		"includeGitInstructions": false,
+		// 这两条原本来自交互式会话的全局设置，而引擎现在不加载它
+		// （--setting-sources ""），所以显式写回来：
+		//   非必要流量关掉——否则每轮都会去探遥测/更新，沙箱里必然失败并留下噪声日志；
+		//   动态工具加载关掉——它会让工具面随会话漂移，文件工具可能整个不出现。
+		"env": map[string]any{
+			"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "true",
+			"ENABLE_TOOL_SEARCH":                       "false",
+		},
 	}
 	return json.MarshalIndent(cfg, "", "  ")
 }
