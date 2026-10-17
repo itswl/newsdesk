@@ -148,22 +148,20 @@ func TestDangerDefaultsOff(t *testing.T) {
 			t.Errorf("DANGER 未明确打开时必须是关着的：%q", body)
 		}
 	}
-	for _, body := range []string{"DANGER=1\n", "DANGER=on\n", "DANGER=YES\n"} {
-		if !load(t, body).Danger() {
-			t.Errorf("DANGER=%q 应该认出是开着", body)
-		}
+	if !load(t, "DANGER=1\n").Danger() {
+		t.Error("DANGER=1 应该认出是开着")
 	}
-	for _, body := range []string{"DANGER=0\n", "DANGER=off\n", "DANGER=false\n"} {
-		if load(t, body).Danger() {
-			t.Errorf("DANGER=%q 应该认出是关着", body)
-		}
+	if load(t, "DANGER=0\n").Danger() {
+		t.Error("DANGER=0 应该认出是关着")
 	}
 }
 
 // 认不出来的取值必须报错，不能猜。猜「开着」= 防护全关，猜「关着」= 以为开着
 // 其实没开，两种都不报错。
 func TestDangerRejectsUnknownValue(t *testing.T) {
-	for _, v := range []string{"yes-please", "2", "danger", "tru"} {
+	// true/on/yes 这些别名也不认：文书写的是只认 1/0，代码就得只认 1/0，
+	// 否则报错文案在说谎，而两边永远不会有人发现对不上
+	for _, v := range []string{"yes-please", "2", "danger", "tru", "true", "on", "YES", "false", "off"} {
 		_, err := Load(write(t, "ENGINE=claude\nDANGER="+v+"\n"))
 		if err == nil {
 			t.Errorf("DANGER=%s 应该报错", v)

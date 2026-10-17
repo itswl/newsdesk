@@ -278,6 +278,9 @@ func cmdStatus(ctx context.Context, args []string) error {
 				note = fmt.Sprintf("正在跑（%s 开始，已 %s）", since.Format("15:04"), time.Since(since).Round(time.Minute))
 			}
 		}
+		// 报告路径单独攒着，最后再拼：下面那个 switch 会整句覆盖 note，
+		// 直接往里加的话，在「产出在、调度状态未同步」那一支上会被冲掉
+		trail := ""
 		// 报告在就是跑过了。手动跑不写调度状态，被中断过的档还留着失败记录——
 		// 只看 schedule.json 会把已有产出的那一档报成「还没跑」或「失败」。
 		// 判据跟调度器的 reconcile 一致：产出时刻不早于预定时刻才算这一档的。
@@ -294,13 +297,14 @@ func cmdStatus(ctx context.Context, args []string) error {
 			case mark == "·":
 				mark, note = "·", note+"（有上一轮的产出）"
 			}
-			note += "   " + st.RelTo(p)
+			trail = "   " + st.RelTo(p)
 		}
-		// 这一档是不是无限制跑出来的——报告已经公开了，事后要能一眼看出来
+		// 这一档是不是无限制跑出来的——报告已经公开了，事后要能一眼看出来。
+		// 放在报告路径之前，否则会读成「路径的限定语」
 		if ts.Danger && ts.Date == today {
 			note += "（危险模式跑的）"
 		}
-		fmt.Printf("  %s %-9s %s  %s\n", mark, t.Key, t.At, note)
+		fmt.Printf("  %s %-9s %s  %s%s\n", mark, t.Key, t.At, note, trail)
 	}
 	switch {
 	case !haveHealth:

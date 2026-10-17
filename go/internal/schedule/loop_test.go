@@ -7,10 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/itswl/newsdesk/internal/config"
+	"github.com/itswl/newsdesk/internal/task"
 )
 
 // confFixture 一个监视着 config.conf 的调度器，告警发到一个只计数的假 webhook。
@@ -325,5 +328,51 @@ func TestBadDangerValueKeepsGuards(t *testing.T) {
 	}
 	if n := f.alerts.Load(); n != 1 {
 		t.Errorf("应当告警一次（沿用上一份配置），现在 %d 次", n)
+	}
+}
+
+// 按产出校正时，危险模式的标记只能继承**同一天**那次的。
+//
+// 跨天继承会把昨天无限制跑出来的标签贴到今天的报告上——一份普通跑出来的报告被
+// 永久标成「危险模式跑的」，比不标更糟：看的人会以为它当时的防护也是关的。
+func TestReconcileDoesNotInheritDangerAcrossDays(t *testing.T) {
+	root := t.TempDir()
+	l := loopAt(t, root)
+	now := time.Date(2026, 10, 17, 12, 0, 0, 0, time.Local)
+	day := now.Format("2006-01-02")
+	tk := task.All[0]
+
+	// 报告文件名由任务的 Files 模式决定，这里把通配符去掉取一个具体名字
+	p := filepath.Join(root, "reports", day, strings.ReplaceAll(tk.Files[0], "*", ""))
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(p, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	// 昨天是危险模式跑的，今天这次是手动跑的
+	st := &State{Tasks: map[string]TaskState{
+		tk.Key: {Date: "2026-10-16", Status: "ok", Danger: true},
+	}}
+	if !l.reconcile(tk, now, st) {
+		t.Fatal("应当按产出校正为已完成")
+	}
+	if st.Tasks[tk.Key].Danger {
+		t.Error("跨天的危险模式标记不该继承到今天这份报告上")
+	}
+
+	// 同一天先失败、后来补出了报告：标记要留着
+	st2 := &State{Tasks: map[string]TaskState{
+		tk.Key: {Date: day, Status: "failed", Danger: true},
+	}}
+	if !l.reconcile(tk, now, st2) {
+		t.Fatal("应当按产出校正为已完成")
+	}
+	if !st2.Tasks[tk.Key].Danger {
+		t.Error("同一天的危险模式标记应当保留")
 	}
 }

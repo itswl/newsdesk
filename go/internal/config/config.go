@@ -83,12 +83,16 @@ func Parse(path string, raw []byte) (*Config, error) {
 	return c, nil
 }
 
-// parseDanger 认 DANGER 的取值。第二项为 false 表示认不出来。
+// parseDanger 认 DANGER 的取值，**只认 1 和 0**。第二项为 false 表示认不出来。
+//
+// 不收 true/on/yes 这些别名：这个开关关掉的是整套防护，只留一种写法，「文档写
+// 只认 1/0、代码其实还认一串同义词」这种漂移正是这个仓库最怕的错——报错文案说
+// 只认 1/0，而 on 悄悄也能用，两边就永远对不上了。写错就报错，改一个字符的事。
 func parseDanger(v string) (bool, bool) {
-	switch strings.ToLower(strings.TrimSpace(v)) {
-	case "1", "true", "on", "yes", "y":
+	switch strings.TrimSpace(v) {
+	case "1":
 		return true, true
-	case "0", "false", "off", "no", "n":
+	case "0":
 		return false, true
 	}
 	return false, false
