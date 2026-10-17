@@ -358,9 +358,12 @@ func (l *Loop) reconcile(t task.Task, now time.Time, st *State) bool {
 		return false
 	}
 	prev := st.Tasks[t.Key]
+	// 只继承**同一天**那次的标记：跨天继承会把昨天无限制跑出来的标签贴到今天的
+	// 报告上，那比不标更糟——一份普通跑出来的报告被永久标成「危险模式跑的」。
+	danger := prev.Danger && prev.Date == day
 	st.Tasks[t.Key] = TaskState{
 		Date: day, Status: "ok", Engine: prev.Engine, Attempts: prev.Attempts,
-		Danger:   prev.Danger,
+		Danger:   danger,
 		Finished: fi.ModTime().Format(time.RFC3339),
 		Reason:   "按产出校正（" + reconcileWhy(prev, day) + "）",
 	}
