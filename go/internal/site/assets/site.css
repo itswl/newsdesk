@@ -53,7 +53,13 @@ html[data-theme=light]{
 /* html 上也要给底色：手滑拉到尽头时回弹露出来的是根元素的背景，不是 body 的，
    不写就会在页面上下各闪一条白边 */
 html{-webkit-text-size-adjust:100%;background:var(--bg)}
+/* 状态栏是 black-translucent：页面铺到最顶上，那一条由下面这层铺满，露出的是
+   当前主题的 --bg——所以切主题时它跟着变（这正是换掉 default 的目的）。
+   做成不透明的一层而不是让正文从状态栏底下穿过去：白字压在浅色正文上没人看得清。 */
+body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top,0px);
+  background:var(--bg2);z-index:100}
 body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
+  padding-top:env(safe-area-inset-top,0px);
   font:16.5px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
        "Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
   letter-spacing:.01em;-webkit-font-smoothing:antialiased}
@@ -68,7 +74,7 @@ body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
 header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px;
   padding-left:max(24px,env(safe-area-inset-left,0px));
   padding-right:max(24px,env(safe-area-inset-right,0px))}
-.tabbar{position:sticky;top:0;z-index:9;background:var(--bg2);
+.tabbar{position:sticky;top:env(safe-area-inset-top,0px);z-index:9;background:var(--bg2);
   border-bottom:1px solid var(--bd);padding:9px 24px;
   padding-left:max(24px,env(safe-area-inset-left,0px));
   padding-right:max(24px,env(safe-area-inset-right,0px))}
@@ -193,7 +199,8 @@ em{color:var(--fg2);font-style:normal}
 
 .arch td.d{white-space:nowrap;font-family:ui-monospace,Menlo,monospace}
 .arch tr.mh td{background:var(--bg4);color:var(--fgh2);font-weight:600;
-  font-family:ui-monospace,Menlo,monospace;padding:8px 12px;position:sticky;top:0}
+  font-family:ui-monospace,Menlo,monospace;padding:8px 12px;position:sticky;
+  top:env(safe-area-inset-top,0px)}
 .arch tr.mh span{font-weight:400;color:var(--fg3);font-size:12px}
 .arch .chip{margin:1px 5px 1px 0;white-space:nowrap}
 .arch td{padding:8px 10px}
