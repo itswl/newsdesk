@@ -5,8 +5,6 @@ export interface Env {
   OCI_NAMESPACE: string;
   OCI_BUCKET: string;
 
-  /** 错误页上的语言入口跟着它走，要与 config.conf 的 SITE_LANGS 一致 */
-  SITE_LANGS?: string;
   /** 站点多久没更新算出事（小时） */
   STALE_ALERT_HOURS?: string;
 
@@ -33,8 +31,4 @@ export interface Env {
 export function origin(env: Env): string {
   return `https://objectstorage.${env.OCI_REGION}.oraclecloud.com`
     + `/n/${env.OCI_NAMESPACE}/b/${env.OCI_BUCKET}/o`;
-}
-
-export function langs(env: Pick<Env, 'SITE_LANGS'>): string[] {
-  return String(env.SITE_LANGS || 'zh-CN').split(',').map(s => s.trim()).filter(Boolean);
 }
