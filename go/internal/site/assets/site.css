@@ -65,10 +65,15 @@ body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
    每条都先写一条不带 env() 的兜底——不认 env() 的浏览器会把后一条整条丢掉，
    只剩前一条，正好是加安全区之前的样子。env() 为 0 时（没有刘海、竖屏）
    max() 取的是前面那个值，等于没写。 */
+/* 顶部内边距带上 env(safe-area-inset-top)：状态栏是 default 时它是 0（等于没写），
+   但装到主屏的 App 有可能仍按「页面铺到状态栏底下」渲染（iOS 会缓存启动配置），
+   那时它是状态栏高度——正文就不会被那层玻璃压住，按钮也点得到。
+   不认 env() 的浏览器丢掉后一条，只剩 16px，正是加之前的样子。 */
 header{background:var(--bg2);border-bottom:1px solid var(--bd);padding:16px 24px;
+  padding-top:calc(16px + env(safe-area-inset-top,0px));
   padding-left:max(24px,env(safe-area-inset-left,0px));
   padding-right:max(24px,env(safe-area-inset-right,0px))}
-.tabbar{position:sticky;top:0;z-index:9;background:var(--bg2);
+.tabbar{position:sticky;top:0;top:env(safe-area-inset-top,0px);z-index:9;background:var(--bg2);
   border-bottom:1px solid var(--bd);padding:9px 24px;
   padding-left:max(24px,env(safe-area-inset-left,0px));
   padding-right:max(24px,env(safe-area-inset-right,0px))}
@@ -193,7 +198,8 @@ em{color:var(--fg2);font-style:normal}
 
 .arch td.d{white-space:nowrap;font-family:ui-monospace,Menlo,monospace}
 .arch tr.mh td{background:var(--bg4);color:var(--fgh2);font-weight:600;
-  font-family:ui-monospace,Menlo,monospace;padding:8px 12px;position:sticky;top:0}
+  font-family:ui-monospace,Menlo,monospace;padding:8px 12px;position:sticky;
+  top:0;top:env(safe-area-inset-top,0px)}
 .arch tr.mh span{font-weight:400;color:var(--fg3);font-size:12px}
 .arch .chip{margin:1px 5px 1px 0;white-space:nowrap}
 .arch td{padding:8px 10px}
