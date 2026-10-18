@@ -304,7 +304,7 @@ func (b *Builder) writeDay(day string) error {
 
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
 		viewport+`<title>%s</title>%s%s%s%s<style>%s</style></head><body>`+
-		`%s<header><div class="bar"><h1 class="site">%s · %s%s</h1>%s%s</div></header>`+
+		`%s<div class="notch" aria-hidden="true"></div><header><div class="bar"><h1 class="site">%s · %s%s</h1>%s%s</div></header>`+
 		`<nav class="tabbar"><div class="tabs" role="tablist" aria-label="%s">%s</div></nav>`+
 		`<main id="main" tabindex="-1">%s`+
 		`<footer class="dis">%s%s%s</footer></main><script>%s</script></body></html>`,
@@ -374,7 +374,7 @@ func (b *Builder) writeArchive() error {
 	title := b.T("site.archive")
 	doc := fmt.Sprintf(`<!doctype html><html lang="%s"><head><meta charset="utf-8">`+
 		viewport+`<title>%s</title>%s%s%s%s<style>%s</style></head><body>`+
-		`%s<header><div class="bar"><h1 class="site">%s · %s %s</h1>`+
+		`%s<div class="notch" aria-hidden="true"></div><header><div class="bar"><h1 class="site">%s · %s %s</h1>`+
 		`<div class="nav"><a href="index.html">%s</a></div>%s</div></header>`+
 		`<main id="main" tabindex="-1">%s<table class="arch"><tr><th>%s</th><th>%s</th></tr>%s</table>`+
 		`<footer class="dis">%s<p class="gen">%s</p></footer></main><script>%s</script></body></html>`,

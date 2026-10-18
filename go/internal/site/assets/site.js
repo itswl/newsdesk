@@ -83,7 +83,16 @@ document.onkeydown=function(e){
       m.removeAttribute('media'); m.setAttribute('content',c);
     });
   }
+  // 状态栏那块盖板：用内联样式显式写一次，别只靠继承的 CSS 变量——实测 iOS 上
+  // 滚动之后那一条的旧背景不跟着变量重绘，只有对元素本身写样式才会。
+  function notch(){
+    var n=document.querySelector('.notch');
+    if(!n) return;
+    var c=getComputedStyle(document.documentElement).getPropertyValue('--bg2').trim();
+    if(c) n.style.background=c;
+  }
   function paint(){
+    notch();
     if(tg){
       var light = now()==='light';
       tg.textContent = light ? '☾' : '☀';
