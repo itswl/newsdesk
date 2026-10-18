@@ -53,6 +53,13 @@ html[data-theme=light]{
 /* html 上也要给底色：手滑拉到尽头时回弹露出来的是根元素的背景，不是 body 的，
    不写就会在页面上下各闪一条白边 */
 html{-webkit-text-size-adjust:100%;background:var(--bg)}
+/* 状态栏那一条的盖板。default 模式下 env(safe-area-inset-top) 是 0，它等于不存在；
+   装到主屏的 App 若仍按「铺到状态栏底下」渲染，滚动之后那一条底下露出的是滚过去的
+   正文，而 iOS 会缓存那块背景、切主题不重绘——所以用这个**真实元素**盖住它，
+   并由 site.js 在切主题时显式改写它的背景（绕开「CSS 变量变了但不重绘」）。
+   pointer-events:none：绝不能挡住点击，这条是纯装饰。 */
+.notch{position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top,0px);
+  background:var(--bg2);z-index:100;pointer-events:none}
 body{margin:0;background:var(--bg);color:var(--fg);overflow-wrap:break-word;
   font:16.5px/1.9 -apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB",
        "Microsoft YaHei","Helvetica Neue",Arial,sans-serif;
