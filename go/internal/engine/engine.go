@@ -152,11 +152,38 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 	return l.w.Write(p)
 }
 
+// childEnv 给引擎子进程的环境：继承自己的，但把 ANTHROPIC_* 与 CLAUDE* 全部剔掉，
+// 再加上调用方显式给的那几条。
+//
+// 调度器继承的是启动它的那个进程的环境，而那可能是一个 Claude Code 会话：2026-10-19 从
+// 会话里重启调度器之后，CLAUDE_CODE_EFFORT_LEVEL=max、CLAUDECODE=1、CLAUDE_CODE_CHILD_SESSION=1
+// 和会话的消息令牌一起流进了每一档的 claude 调用——次日 06:30 那档思考 token 占输出 80%
+// （69k / 86k），跑了 17 分钟，而正常那档是 35%。效果上等于有人偷偷把推理档位拧到最大。
+// 反过来也一样：谁的 shell 里要是 export 了 ANTHROPIC_API_KEY 或 ANTHROPIC_BASE_URL，
+// 订阅那次就会被它劫走（CLI 明说 API key 优先于登录态），甚至把登录态发往别的端点。
+// 所以引擎的环境只认两样：自己注入的（api 的端点与令牌），和与这两家无关的其他变量。
+// CLAUDE_CONFIG_DIR 留着：它指的是登录态在哪，拿掉会把认证掐断。
+func childEnv(extra []string) []string {
+	var env []string
+	for _, kv := range os.Environ() {
+		k, _, _ := strings.Cut(kv, "=")
+		if k == "CLAUDE_CONFIG_DIR" {
+			env = append(env, kv)
+			continue
+		}
+		if strings.HasPrefix(k, "ANTHROPIC_") || strings.HasPrefix(k, "CLAUDE") {
+			continue
+		}
+		env = append(env, kv)
+	}
+	return append(env, extra...)
+}
+
 // execStream 跑 claude 并把 stream-json 还原成可读日志，末尾补一行用量。
 func (r *Runner) execStream(ctx context.Context, extraEnv []string, args ...string) (Usage, error) {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = r.Root
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = childEnv(extraEnv)
 	out := r.Out
 	if out == nil {
 		out = os.Stdout
@@ -190,7 +217,7 @@ func (r *Runner) execStream(ctx context.Context, extraEnv []string, args ...stri
 func (r *Runner) exec(ctx context.Context, extraEnv []string, name string, args ...string) error {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = r.Root
-	cmd.Env = append(os.Environ(), extraEnv...)
+	cmd.Env = childEnv(extraEnv)
 	out := r.Out
 	if out == nil {
 		out = os.Stdout

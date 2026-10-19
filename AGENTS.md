@@ -216,8 +216,17 @@ Trending 那一档有早间草稿：文件在，但那是上一轮的产物，16
   「⚠ 工具调用被拒（Bash）：…」——无人值守没有审批面，带变量的 Bash 命令会被自动拒。
 
 - **`rate_limit_event` 打成一行配额**：「⏱ 配额：5 小时窗 78%（14:00 重置）· 本周 13%
-  （10-26 09:00 重置）」，同一场里数值不变不重复打，没有窗口数据的不打。切兜底的那一档，
+  （10-26 09:00 重置）」。每次 API 往返都来一条、利用率逐次爬 1%，所以首条照打，之后只在
+  状态变了或某个窗口挪了 10 个点以上才再打；没有窗口数据的不打。切兜底的那一档，
   「hit your weekly limit」之前的这一行能说明窗口是被谁用光的；api 走第三方网关一般没有这条。
+
+**引擎子进程的环境要洗。** 调度器继承启动它的那个进程的环境，而那可能是一个 Claude Code
+会话：2026-10-19 从会话里重启调度器，`CLAUDE_CODE_EFFORT_LEVEL=max`、`CLAUDECODE=1` 和会话的
+消息令牌一起流进了每一档的 claude 调用，次日 06:30 那档思考 token 占输出 80%、跑了 17 分钟
+（正常 35%）。反方向，shell 里 export 的 `ANTHROPIC_API_KEY` / `ANTHROPIC_BASE_URL` 会把订阅
+那次劫走——CLI 明说 API key 优先于登录态。`engine.childEnv` 把 `ANTHROPIC_*` 与 `CLAUDE*`
+全部剔掉，只加回自己注入的（api 的端点与令牌），`CLAUDE_CONFIG_DIR` 例外（指向登录态）。
+兜底的 key 只在 api 那次注入，订阅那次拿不到它。
 
 拿不到 `result` 事件时（进程被信号杀掉）用量行写「没取到」，**不能写 0**——那会让人
 以为这一档很便宜。用量还写进 `state/schedule.json`（`usage`），`newsdesk status` 在每档

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"strings"
 	"time"
 )
@@ -189,10 +190,18 @@ func renderStream(r io.Reader, out io.Writer) (Usage, error) {
 }
 
 // renderState 跨事件要记住的东西：最后一段话（result 成功时是它的副本，不重复打）
-// 和上一条配额行（同一场里数值不变就不再打）。
+// 和上一次打过的配额（同一场里只在明显变化时再打）。
 type renderState struct {
 	lastText string
-	lastRate string
+	rate     *rateSeen
+}
+
+// rateSeen 上一次打出来的配额。每次 API 往返都会来一条 rate_limit_event，利用率逐次
+// 爬 1%，逐条打的话一档就是二十来行——首条照打，之后只在状态变了或某个窗口挪了
+// 10 个点以上才再打。
+type rateSeen struct {
+	status     string
+	five, week float64
 }
 
 // renderEvent 处理一个事件。
@@ -208,9 +217,9 @@ func renderEvent(ev streamEvent, st *renderState, u *Usage, out io.Writer) {
 	case "rate_limit_event":
 		// 订阅的用量窗口用到几成。它只在这里能看到：切兜底的那一档，日志里
 		// 「hit your weekly limit」之前的这一行能说明是窗口被谁用光的。
-		if line := rateLine(ev); line != "" && line != st.lastRate {
+		if line, seen := rateLine(ev); line != "" && st.rate.moved(seen) {
 			fmt.Fprintln(out, line)
-			st.lastRate = line
+			st.rate = &seen
 		}
 	case "system":
 		// 工具调用被权限层自动拒绝（无人值守没有审批面）。模型会自己绕过去，
@@ -232,18 +241,32 @@ func renderEvent(ev streamEvent, st *renderState, u *Usage, out io.Writer) {
 	}
 }
 
+// moved 这次的配额值得再打一行吗。
+func (r *rateSeen) moved(now rateSeen) bool {
+	if r == nil {
+		return true
+	}
+	step := func(a, b float64) bool { return math.Abs(a-b) >= 0.10 }
+	return r.status != now.status || step(r.five, now.five) || step(r.week, now.week)
+}
+
 // rateLine 把 rate_limit_event 压成一行：「⏱ 配额：5 小时窗 78%（14:00 重置）· 本周 13%（10-26 09:00 重置）」。
 // 没有窗口数据就不打（有些事件只报 status）。
-func rateLine(ev streamEvent) string {
+func rateLine(ev streamEvent) (string, rateSeen) {
+	seen := rateSeen{status: ev.RateLimit.Status}
 	var parts []string
-	for _, w := range []struct{ key, label, layout string }{
-		{"five_hour", "5 小时窗", "15:04"},
-		{"seven_day", "本周", "01-02 15:04"},
+	for _, w := range []struct {
+		key, label, layout string
+		into               *float64
+	}{
+		{"five_hour", "5 小时窗", "15:04", &seen.five},
+		{"seven_day", "本周", "01-02 15:04", &seen.week},
 	} {
 		win, ok := ev.RateLimit.Windows[w.key]
 		if !ok {
 			continue
 		}
+		*w.into = win.Utilization
 		s := fmt.Sprintf("%s %.0f%%", w.label, win.Utilization*100)
 		if win.ResetsAt > 0 {
 			s += fmt.Sprintf("（%s 重置）", time.Unix(win.ResetsAt, 0).Format(w.layout))
@@ -251,11 +274,11 @@ func rateLine(ev streamEvent) string {
 		parts = append(parts, s)
 	}
 	if len(parts) == 0 {
-		return ""
+		return "", seen
 	}
 	line := "⏱ 配额：" + strings.Join(parts, " · ")
 	if ev.RateLimit.Status != "" && ev.RateLimit.Status != "allowed" {
 		line += "（" + ev.RateLimit.Status + "）"
 	}
-	return line
+	return line, seen
 }

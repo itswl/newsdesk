@@ -229,7 +229,8 @@ func TestRenderStream(t *testing.T) {
 {"type":"user","message":{"role":"user","content":[{"tool_use_id":"t1","type":"tool_result","content":"Permission for this tool use was denied.","is_error":true}]}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1792389600,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.78,"resetsAt":1792389600},"seven_day":{"utilization":0.13,"resetsAt":1792976400}}}}
-{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1792389600,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.78,"resetsAt":1792389600},"seven_day":{"utilization":0.13,"resetsAt":1792976400}}}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1792389600,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.79,"resetsAt":1792389600},"seven_day":{"utilization":0.13,"resetsAt":1792976400}}}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1792389600,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.91,"resetsAt":1792389600},"seven_day":{"utilization":0.13,"resetsAt":1792976400}}}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"好的。"}]}}
 {"type":"result","is_error":false,"num_turns":3,"total_cost_usd":0.0013,"result":"好的。","usage":{"input_tokens":243,"output_tokens":4,"cache_read_input_tokens":1344,"cache_creation_input_tokens":7,"output_tokens_details":{"thinking_tokens":2}}}
 `
@@ -254,12 +255,13 @@ func TestRenderStream(t *testing.T) {
 	if strings.Contains(out, `{"type":`) {
 		t.Errorf("认得的事件不该以原始 JSON 倾进日志：%s", out)
 	}
-	// 用量窗口用到几成只有这里能看到；没有窗口数据的那条不打，数值相同的不重复打
+	// 用量窗口用到几成只有这里能看到；没有窗口数据的那条不打，每次往返爬 1% 的不重复打，
+	// 挪了 10 个点以上才再打一行
 	if !strings.Contains(out, "配额：5 小时窗 78%") || !strings.Contains(out, "本周 13%") {
 		t.Errorf("rate_limit_event 应当打成配额行：%s", out)
 	}
-	if strings.Count(out, "配额：") != 1 {
-		t.Errorf("配额行应当恰好一条（无窗口数据的不打、重复的不打）：%s", out)
+	if strings.Count(out, "配额：") != 2 || !strings.Contains(out, "5 小时窗 91%") {
+		t.Errorf("配额行应当恰好两条（78%% 和 91%%；无窗口数据的不打、79%% 那条不打）：%s", out)
 	}
 
 	failJSONL := `{"type":"rate_limit_event"}
@@ -314,6 +316,38 @@ func TestStreamMessageShapes(t *testing.T) {
 	ev = streamEvent{}
 	if err := json.Unmarshal([]byte(`{"type":"x","message":42}`), &ev); err != nil {
 		t.Errorf("认不出的形状当没有，不报错：%v", err)
+	}
+}
+
+// 引擎子进程的环境不能照单全收：调度器从 Claude Code 会话里启动过一次，
+// CLAUDE_CODE_EFFORT_LEVEL=max 就跟着流进了每一档，思考 token 翻了一倍多；
+// 反方向，shell 里的 ANTHROPIC_API_KEY 会把订阅那次劫走。只留自己注入的那几条。
+func TestChildEnvScrubsAnthropicAndClaudeCode(t *testing.T) {
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-EXAMPLE")
+	t.Setenv("ANTHROPIC_BASE_URL", "https://stray.example")
+	t.Setenv("CLAUDE_CODE_EFFORT_LEVEL", "max")
+	t.Setenv("CLAUDECODE", "1")
+	t.Setenv("CLAUDE_CODE_MESSAGING_TOKEN", "EXAMPLE")
+	t.Setenv("CLAUDE_CONFIG_DIR", "/tmp/cfg")
+	t.Setenv("NEWSDESK_TEST_KEEP", "1")
+	env := childEnv([]string{"ANTHROPIC_BASE_URL=https://gateway.example", "ANTHROPIC_AUTH_TOKEN=EXAMPLE"})
+	has := func(prefix string) bool {
+		for _, kv := range env {
+			if strings.HasPrefix(kv, prefix) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, gone := range []string{"ANTHROPIC_API_KEY=", "CLAUDE_CODE_EFFORT_LEVEL=", "CLAUDECODE=", "CLAUDE_CODE_MESSAGING_TOKEN=", "ANTHROPIC_BASE_URL=https://stray"} {
+		if has(gone) {
+			t.Errorf("%s 不该传给引擎", gone)
+		}
+	}
+	for _, keep := range []string{"CLAUDE_CONFIG_DIR=/tmp/cfg", "NEWSDESK_TEST_KEEP=1", "ANTHROPIC_BASE_URL=https://gateway.example", "ANTHROPIC_AUTH_TOKEN=EXAMPLE"} {
+		if !has(keep) {
+			t.Errorf("%s 应当保留：%v", keep, env)
+		}
 	}
 }
 
