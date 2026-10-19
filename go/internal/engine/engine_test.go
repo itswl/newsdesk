@@ -228,6 +228,8 @@ func TestRenderStream(t *testing.T) {
 {"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"t1","message":"Permission for this tool use was denied. What required approval: A variable in this command can't be checked before it runs"}
 {"type":"user","message":{"role":"user","content":[{"tool_use_id":"t1","type":"tool_result","content":"Permission for this tool use was denied.","is_error":true}]}}
 {"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1792389600,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false,"unifiedWindows":{"five_hour":{"utilization":0.78,"resetsAt":1792389600},"seven_day":{"utilization":0.13,"resetsAt":1792976400}}}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1792389600,"rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.78,"resetsAt":1792389600},"seven_day":{"utilization":0.13,"resetsAt":1792976400}}}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"好的。"}]}}
 {"type":"result","is_error":false,"num_turns":3,"total_cost_usd":0.0013,"result":"好的。","usage":{"input_tokens":243,"output_tokens":4,"cache_read_input_tokens":1344,"cache_creation_input_tokens":7,"output_tokens_details":{"thinking_tokens":2}}}
 `
@@ -251,6 +253,13 @@ func TestRenderStream(t *testing.T) {
 	}
 	if strings.Contains(out, `{"type":`) {
 		t.Errorf("认得的事件不该以原始 JSON 倾进日志：%s", out)
+	}
+	// 用量窗口用到几成只有这里能看到；没有窗口数据的那条不打，数值相同的不重复打
+	if !strings.Contains(out, "配额：5 小时窗 78%") || !strings.Contains(out, "本周 13%") {
+		t.Errorf("rate_limit_event 应当打成配额行：%s", out)
+	}
+	if strings.Count(out, "配额：") != 1 {
+		t.Errorf("配额行应当恰好一条（无窗口数据的不打、重复的不打）：%s", out)
 	}
 
 	failJSONL := `{"type":"rate_limit_event"}

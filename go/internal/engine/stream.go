@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 // 一次调用的用量。
@@ -94,6 +95,15 @@ type streamEvent struct {
 		} `json:"output_tokens_details"`
 	} `json:"usage"`
 	Message streamMessage `json:"message"`
+	// rate_limit_event：订阅的两个用量窗口当前用到几成。只有 claude 引擎有，
+	// api 走第三方网关一般没有。
+	RateLimit struct {
+		Status  string `json:"status"`
+		Windows map[string]struct {
+			Utilization float64 `json:"utilization"`
+			ResetsAt    int64   `json:"resetsAt"`
+		} `json:"unifiedWindows"`
+	} `json:"rate_limit_info"`
 }
 
 // streamMessage 事件里的 message 字段。
@@ -153,7 +163,7 @@ func (m *streamMessage) UnmarshalJSON(b []byte) error {
 func renderStream(r io.Reader, out io.Writer) (Usage, error) {
 	var u Usage
 	br := bufio.NewReader(r)
-	var lastText string
+	st := &renderState{}
 	for {
 		line, rerr := br.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
@@ -166,7 +176,7 @@ func renderStream(r io.Reader, out io.Writer) (Usage, error) {
 					fmt.Fprintln(out)
 				}
 			} else {
-				lastText = renderEvent(ev, lastText, &u, out)
+				renderEvent(ev, st, &u, out)
 			}
 		}
 		if rerr == io.EOF {
@@ -178,15 +188,29 @@ func renderStream(r io.Reader, out io.Writer) (Usage, error) {
 	}
 }
 
-// renderEvent 处理一个事件，返回更新后的「最后一段话」。
-func renderEvent(ev streamEvent, lastText string, u *Usage, out io.Writer) string {
+// renderState 跨事件要记住的东西：最后一段话（result 成功时是它的副本，不重复打）
+// 和上一条配额行（同一场里数值不变就不再打）。
+type renderState struct {
+	lastText string
+	lastRate string
+}
+
+// renderEvent 处理一个事件。
+func renderEvent(ev streamEvent, st *renderState, u *Usage, out io.Writer) {
 	switch ev.Type {
 	case "assistant":
 		for _, b := range ev.Message.Content {
 			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
 				fmt.Fprintln(out, b.Text)
-				lastText = b.Text
+				st.lastText = b.Text
 			}
+		}
+	case "rate_limit_event":
+		// 订阅的用量窗口用到几成。它只在这里能看到：切兜底的那一档，日志里
+		// 「hit your weekly limit」之前的这一行能说明是窗口被谁用光的。
+		if line := rateLine(ev); line != "" && line != st.lastRate {
+			fmt.Fprintln(out, line)
+			st.lastRate = line
 		}
 	case "system":
 		// 工具调用被权限层自动拒绝（无人值守没有审批面）。模型会自己绕过去，
@@ -202,9 +226,36 @@ func renderEvent(ev streamEvent, lastText string, u *Usage, out io.Writer) strin
 			CostUSD:  ev.Cost, Turns: ev.NumTurns, Known: true,
 		}
 		// 失败时错误正文只在这儿。成功时 result 是最后一段话的副本，不重复打。
-		if ev.IsError && strings.TrimSpace(ev.Result) != "" && ev.Result != lastText {
+		if ev.IsError && strings.TrimSpace(ev.Result) != "" && ev.Result != st.lastText {
 			fmt.Fprintln(out, ev.Result)
 		}
 	}
-	return lastText
+}
+
+// rateLine 把 rate_limit_event 压成一行：「⏱ 配额：5 小时窗 78%（14:00 重置）· 本周 13%（10-26 09:00 重置）」。
+// 没有窗口数据就不打（有些事件只报 status）。
+func rateLine(ev streamEvent) string {
+	var parts []string
+	for _, w := range []struct{ key, label, layout string }{
+		{"five_hour", "5 小时窗", "15:04"},
+		{"seven_day", "本周", "01-02 15:04"},
+	} {
+		win, ok := ev.RateLimit.Windows[w.key]
+		if !ok {
+			continue
+		}
+		s := fmt.Sprintf("%s %.0f%%", w.label, win.Utilization*100)
+		if win.ResetsAt > 0 {
+			s += fmt.Sprintf("（%s 重置）", time.Unix(win.ResetsAt, 0).Format(w.layout))
+		}
+		parts = append(parts, s)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	line := "⏱ 配额：" + strings.Join(parts, " · ")
+	if ev.RateLimit.Status != "" && ev.RateLimit.Status != "allowed" {
+		line += "（" + ev.RateLimit.Status + "）"
+	}
+	return line
 }
