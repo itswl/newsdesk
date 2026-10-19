@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itswl/newsdesk/internal/engine"
+	"github.com/itswl/newsdesk/internal/translate"
 )
 
 type TaskState struct {
@@ -39,6 +40,9 @@ type TaskState struct {
 	// Usage 这一档模型调用的累计用量（claude CLI 的 result 事件）。没拿到就不写，
 	// 不能写 0。
 	Usage *engine.Usage `json:"usage,omitempty"`
+	// Translate 这一档英文翻译的用量。翻译每天都走兜底那个按量付费账号，
+	// 问「兜底花了多少」时它和落到兜底的分析档要一起算。
+	Translate *translate.Usage `json:"translate,omitempty"`
 }
 
 type State struct {

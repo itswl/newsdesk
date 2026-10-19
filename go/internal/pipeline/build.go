@@ -22,7 +22,7 @@ import (
 //
 // 只在英文真的会被发布时才跑：每天约十万 token 的按量付费开销，
 // 为一个没人看得到的语言花钱没意义。
-func Translate(ctx context.Context, root, date string, cfg *config.Config, out io.Writer) error {
+func Translate(ctx context.Context, root, date string, cfg *config.Config, out io.Writer) (translate.Usage, error) {
 	eff := langs.Effective(cfg, root)
 	want := false
 	for _, l := range eff {
@@ -31,10 +31,11 @@ func Translate(ctx context.Context, root, date string, cfg *config.Config, out i
 		}
 	}
 	if !want {
-		return nil
+		return translate.Usage{}, nil
 	}
 	c := translate.New(cfg.Get("FALLBACK_BASE_URL", ""),
 		cfg.Get("FALLBACK_AUTH_TOKEN", ""), cfg.Get("FALLBACK_MODEL", ""))
+	c.Out = out // 翻译花了多少要进这一档自己的日志，不能只落在 scheduler.log 里
 	fmt.Fprintf(out, "翻译 %s 的报告 → en\n", date)
 	return c.Day(ctx, root, date, false)
 }

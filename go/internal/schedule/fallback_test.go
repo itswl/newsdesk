@@ -6,6 +6,7 @@ import (
 
 	"github.com/itswl/newsdesk/internal/engine"
 	"github.com/itswl/newsdesk/internal/task"
+	"github.com/itswl/newsdesk/internal/translate"
 )
 
 // 主引擎失效、兜底顶上：段开始告警一次，回来再告警一次，中间的档不响。
@@ -49,7 +50,8 @@ func TestSaveLoadKeepsFallbackAndUsage(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "s.json")
 	s := &State{Tasks: map[string]TaskState{
 		"ai": {Date: "2026-10-19", Status: "ok", Engine: "api", Fallback: true, FallbackWhy: "quota",
-			Usage: &engine.Usage{Input: 42679, Output: 24294, CacheRead: 75392, Turns: 6, CostUSD: 0.67}},
+			Usage:     &engine.Usage{Input: 42679, Output: 24294, CacheRead: 75392, Turns: 6, CostUSD: 0.67},
+			Translate: &translate.Usage{Input: 8905, Output: 8012}},
 		"douban": {Date: "2026-10-19", Status: "ok", Engine: "claude"},
 	}, FallbackSince: "2026-10-15T06:35:00+08:00"}
 	if err := s.Save(p); err != nil {
@@ -62,6 +64,9 @@ func TestSaveLoadKeepsFallbackAndUsage(t *testing.T) {
 	ai := got.Tasks["ai"]
 	if !ai.Fallback || ai.FallbackWhy != "quota" || ai.Usage == nil || ai.Usage.Input != 42679 || ai.Usage.Turns != 6 {
 		t.Errorf("兜底标记或用量没存回来：%+v", ai)
+	}
+	if ai.Translate == nil || ai.Translate.Input != 8905 || ai.Translate.Output != 8012 {
+		t.Errorf("翻译用量没存回来：%+v", ai.Translate)
 	}
 	if got.Tasks["douban"].Usage != nil || got.Tasks["douban"].Fallback {
 		t.Errorf("没有的字段不该无中生有：%+v", got.Tasks["douban"])

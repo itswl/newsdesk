@@ -295,7 +295,7 @@ func TestDaySkipsDraftFiles(t *testing.T) {
 	c := New(server.URL, "k", "m")
 	c.HTTP = server.Client()
 	root := filepath.Dir(filepath.Dir(dir))
-	if err := c.Day(context.Background(), root, "2026-10-10", true); err != nil {
+	if _, err := c.Day(context.Background(), root, "2026-10-10", true); err != nil {
 		t.Fatal(err)
 	}
 	if n := atomic.LoadInt32(&calls); n != 0 {

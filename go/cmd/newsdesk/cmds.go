@@ -130,7 +130,8 @@ func cmdTranslate(ctx context.Context, args []string) error {
 	}
 	c := translate.New(cfg.Get("FALLBACK_BASE_URL", ""),
 		cfg.Get("FALLBACK_AUTH_TOKEN", ""), cfg.Get("FALLBACK_MODEL", ""))
-	return c.Day(ctx, root, date, *force)
+	_, err = c.Day(ctx, root, date, *force)
+	return err
 }
 
 func cmdPublish(ctx context.Context, args []string) error {
@@ -310,9 +311,53 @@ func cmdStatus(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("  %s %-9s %s  %s%s\n", mark, t.Key, t.At, note, trail)
 		// 这一档花了多少。日志会滚，状态文件里这份才能随时回答「这档多贵」。
-		// 成本只在 claude 引擎下打：那是 CLI 按 Anthropic 价目估的，第三方网关对不上任何账单
-		if ts.Usage != nil && ts.Date == today {
-			fmt.Printf("    用量：%s\n", ts.Usage.Brief(ts.Engine == string(engine.Claude)))
+		// 成本只在 claude 引擎下打：那是 CLI 按 Anthropic 价目估的，第三方网关对不上任何账单。
+		// 翻译单列：它每天都走兜底账号，和分析用的引擎无关。
+		if ts.Date == today && (ts.Usage != nil || ts.Translate != nil) {
+			var parts []string
+			if ts.Usage != nil {
+				parts = append(parts, ts.Usage.Brief(ts.Engine == string(engine.Claude)))
+			}
+			if ts.Translate != nil {
+				parts = append(parts, "翻译 入 "+kilo(ts.Translate.Input)+" / 出 "+kilo(ts.Translate.Output))
+			}
+			fmt.Printf("    用量：%s\n", strings.Join(parts, " ｜ "))
+		}
+	}
+	// 兜底账号今天一共用了多少：落到兜底的分析档 + 翻译（翻译每天都走它）。
+	// 订阅那边有自己的窗口和周限额，按量付费这边没人替你算，这一行就是账单的预告。
+	if _, fb := engine.Plan(cfg); fb != "" {
+		var an engine.Usage
+		var tr translate.Usage
+		nAn, nTr := 0, 0
+		for _, t := range task.All {
+			ts := s.Tasks[t.Key]
+			if ts.Date != today {
+				continue
+			}
+			if ts.Usage != nil && ts.Engine == string(fb) {
+				nAn++
+				an.Input += ts.Usage.Input
+				an.CacheRead += ts.Usage.CacheRead
+				an.CacheWrite += ts.Usage.CacheWrite
+				an.Output += ts.Usage.Output
+				an.Turns += ts.Usage.Turns
+			}
+			if ts.Translate != nil {
+				nTr++
+				tr.Input += ts.Translate.Input
+				tr.Output += ts.Translate.Output
+			}
+		}
+		var parts []string
+		if nAn > 0 {
+			parts = append(parts, fmt.Sprintf("分析 %d 档 %s", nAn, an.Brief(false)))
+		}
+		if nTr > 0 {
+			parts = append(parts, fmt.Sprintf("翻译 %d 档 入 %s / 出 %s", nTr, kilo(tr.Input), kilo(tr.Output)))
+		}
+		if len(parts) > 0 {
+			fmt.Printf("兜底账号 %s 今日：%s\n", engine.Describe(cfg, fb), strings.Join(parts, "；"))
 		}
 	}
 	switch {
@@ -395,3 +440,6 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+// kilo 把 token 数缩成「8.9k」：翻译那行日志就是这么打的，status 跟它一致。
+func kilo(n int) string { return fmt.Sprintf("%.1fk", float64(n)/1000) }

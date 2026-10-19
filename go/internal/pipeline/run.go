@@ -12,6 +12,7 @@ import (
 	"github.com/itswl/newsdesk/internal/engine"
 	"github.com/itswl/newsdesk/internal/store"
 	"github.com/itswl/newsdesk/internal/task"
+	"github.com/itswl/newsdesk/internal/translate"
 )
 
 type Options struct {
@@ -39,6 +40,8 @@ type Result struct {
 	Usage          engine.Usage
 	FellBack       bool
 	PrimaryFailure engine.Failure
+	// Translate 英文翻译的用量。它每天都走兜底那套按量付费配置，不管分析用的是谁。
+	Translate translate.Usage
 }
 
 // Run 跑完一个任务的全流程。
@@ -115,7 +118,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 
 	done = step(4, "翻译")
-	err = Translate(ctx, o.Root, o.Date, o.Cfg, out)
+	res.Translate, err = Translate(ctx, o.Root, o.Date, o.Cfg, out)
 	done()
 	if err != nil {
 		// 翻译失败不该让今天的简体站也发不出去

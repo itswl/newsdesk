@@ -422,6 +422,10 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 		u := res.Usage
 		next.Usage = &u
 	}
+	if res.Translate.Input+res.Translate.Output > 0 {
+		tu := res.Translate
+		next.Translate = &tu
+	}
 	st.Tasks[t.Key] = next
 	if e := st.Save(l.statePath); e != nil {
 		l.logf("!! 状态保存失败：%v", e)

@@ -52,6 +52,9 @@ Rules:
 type Client struct {
 	BaseURL, Token, Model string
 	HTTP                  *http.Client
+	// Out 进度与用量去向；nil = 标准输出。流水线里要指到任务日志：以前用 fmt.Printf，
+	// 守护进程下只落进 scheduler.log 且没有任务前缀，单档日志里完全看不到翻译花了多少。
+	Out io.Writer
 }
 
 func New(base, token, model string) *Client {
@@ -66,7 +69,12 @@ func New(base, token, model string) *Client {
 		}}
 }
 
-type Usage struct{ Input, Output int }
+// Usage 一次或一组调用的 token 数。带 json 标签：按档落进 state/schedule.json，
+// status 按天汇总「兜底账号今天花了多少」。
+type Usage struct {
+	Input  int `json:"input"`
+	Output int `json:"output"`
+}
 
 // errTruncated 译文被 max_tokens 截断。单独成一个哨兵：这种失败**不重试**——
 // 同样的块、同样的参数再发一遍，还是同样的长度。
@@ -380,11 +388,11 @@ func (c *Client) File(ctx context.Context, src string, force bool) (FileResult, 
 }
 
 // Day 翻某一天的全部报告。
-func (c *Client) Day(ctx context.Context, root, date string, force bool) error {
+func (c *Client) Day(ctx context.Context, root, date string, force bool) (Usage, error) {
 	dir := filepath.Join(root, "reports", date)
 	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return nil // 那天没有报告，不是错误
+		return Usage{}, nil // 那天没有报告，不是错误
 	}
 	var failed int
 	var total Usage
@@ -402,9 +410,9 @@ func (c *Client) Day(ctx context.Context, root, date string, force bool) error {
 		switch {
 		case err != nil:
 			failed++
-			fmt.Printf("  ✗ %s  %v\n", rel, err)
+			fmt.Fprintf(c.w(), "  ✗ %s  %v\n", rel, err)
 		case r.Skipped:
-			fmt.Printf("  · %s  已是最新，跳过\n", rel)
+			fmt.Fprintf(c.w(), "  · %s  已是最新，跳过\n", rel)
 		default:
 			files++
 			total.Input += r.Usage.Input
@@ -413,20 +421,20 @@ func (c *Client) Day(ctx context.Context, root, date string, force bool) error {
 			if r.Warn != "" {
 				w = "  ⚠ 结构对不上: " + r.Warn
 			}
-			fmt.Printf("  ✓ %s  %.0fs  %.1fk tokens%s\n", rel, r.Elapsed.Seconds(),
+			fmt.Fprintf(c.w(), "  ✓ %s  %.0fs  %.1fk tokens%s\n", rel, r.Elapsed.Seconds(),
 				float64(r.Usage.Input+r.Usage.Output)/1000, w)
 		}
 	}
 	if files > 0 {
 		// 用量要看得见：按量付费不吃订阅窗口，但它确实在花钱，
 		// 而花了多少原本一点痕迹都没有
-		fmt.Printf("  ── 本次 %d 篇，入 %.1fk / 出 %.1fk tokens\n",
+		fmt.Fprintf(c.w(), "  ── 本次 %d 篇，入 %.1fk / 出 %.1fk tokens\n",
 			files, float64(total.Input)/1000, float64(total.Output)/1000)
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d 篇翻译失败", failed)
+		return total, fmt.Errorf("%d 篇翻译失败", failed)
 	}
-	return nil
+	return total, nil
 }
 
 func abs(n int) int {
@@ -441,4 +449,11 @@ func snip(b []byte) string {
 		s = s[:200]
 	}
 	return s
+}
+
+func (c *Client) w() io.Writer {
+	if c.Out != nil {
+		return c.Out
+	}
+	return os.Stdout
 }
