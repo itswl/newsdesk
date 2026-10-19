@@ -1,8 +1,9 @@
 package engine
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -13,15 +14,18 @@ import (
 // 数字来自 claude --output-format stream-json 的 result 事件，那一份是整场会话的
 // 累计（每轮请求的输入都会加上去），所以它是「这次调用一共消耗了多少 token」，
 // 不是「最后一次请求有多大」。
+//
+// 带 json 标签是因为它要落进 state/schedule.json：日志会滚，事后要能回答
+// 「这一档花了多少」只能靠状态文件，newsdesk status 也从那里读。
 type Usage struct {
-	Input      int     // 每次请求的提示词 token 之和
-	Output     int     // 生成 token 之和（含思考）
-	CacheRead  int     // 命中缓存的输入
-	CacheWrite int     // 写入缓存的输入
-	Thinking   int     // output 里的思考部分，能取到才有意义
-	CostUSD    float64 // CLI 按自己的价目表估的，第三方网关只能当参考
-	Turns      int
-	Known      bool // 拿到 result 事件没有
+	Input      int     `json:"input"`              // 每次请求的提示词 token 之和
+	Output     int     `json:"output"`             // 生成 token 之和（含思考）
+	CacheRead  int     `json:"cache_read"`         // 命中缓存的输入
+	CacheWrite int     `json:"cache_write"`        // 写入缓存的输入
+	Thinking   int     `json:"thinking,omitempty"` // output 里的思考部分，能取到才有意义
+	CostUSD    float64 `json:"cost_usd"`           // CLI 按自己的价目表估的，第三方网关只能当参考
+	Turns      int     `json:"turns"`
+	Known      bool    `json:"-"` // 拿到 result 事件没有。只有 Known 的才落盘，所以不序列化
 }
 
 // String 一行可读的用量，直接进任务日志。
@@ -32,12 +36,23 @@ func (u Usage) String() string {
 	if !u.Known {
 		return "=== 用量：没取到（进程没有给出 result 事件，多半是被中断）==="
 	}
-	s := fmt.Sprintf("=== 用量：输入 %s · 缓存读 %s · 缓存写 %s · 输出 %s",
+	return "=== 用量：" + u.Brief(true) + " ==="
+}
+
+// Brief 不带框的一行，给 status 用。
+//
+// withCost 为假时不打成本：成本是 claude CLI 按 Anthropic 价目估的，走第三方网关
+// （api 引擎）时模型名它都不认识，那个数字对不上任何账单，打出来只会误导。
+func (u Usage) Brief(withCost bool) string {
+	s := fmt.Sprintf("输入 %s · 缓存读 %s · 缓存写 %s · 输出 %s",
 		thousands(u.Input), thousands(u.CacheRead), thousands(u.CacheWrite), thousands(u.Output))
 	if u.Thinking > 0 {
 		s += fmt.Sprintf("（思考 %s）", thousands(u.Thinking))
 	}
-	s += fmt.Sprintf(" · %d 轮 · 成本 $%.4f（CLI 估算） ===", u.Turns, u.CostUSD)
+	s += fmt.Sprintf(" · %d 轮", u.Turns)
+	if withCost {
+		s += fmt.Sprintf(" · 成本 $%.4f（CLI 估算）", u.CostUSD)
+	}
 	return s
 }
 
@@ -63,6 +78,8 @@ func thousands(n int) string {
 // streamEvent 是 stream-json 的一行。只声明用得上的字段——CLI 加字段不该让解析失败。
 type streamEvent struct {
 	Type     string  `json:"type"`
+	Subtype  string  `json:"subtype"`
+	ToolName string  `json:"tool_name"`
 	IsError  bool    `json:"is_error"`
 	Result   string  `json:"result"`
 	NumTurns int     `json:"num_turns"`
@@ -76,63 +93,118 @@ type streamEvent struct {
 			Thinking int `json:"thinking_tokens"`
 		} `json:"output_tokens_details"`
 	} `json:"usage"`
-	Message struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-	} `json:"message"`
+	Message streamMessage `json:"message"`
+}
+
+// streamMessage 事件里的 message 字段。
+//
+// ⚠️ 它不总是对象。assistant / user 事件里是 {"content":[…]}，但 claude CLI 2.1.303 起
+// system/permission_denied 事件里它是一个字符串（拒绝的原因）。以前按对象声明，
+// json 一碰到字符串就报错——2026-10-19 两档的用量行就是这么丢的。两种形状都收下：
+// 对象取 content 里的文本块，字符串原样留在 Text。其他形状当没有，不让整行失败。
+type streamMessage struct {
+	Text    string
+	Content []streamBlock
+}
+
+type streamBlock struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
+func (m *streamMessage) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || bytes.Equal(b, []byte("null")) {
+		return nil
+	}
+	switch b[0] {
+	case '"':
+		return json.Unmarshal(b, &m.Text)
+	case '{':
+		var obj struct {
+			Content json.RawMessage `json:"content"`
+		}
+		if err := json.Unmarshal(b, &obj); err != nil || len(obj.Content) == 0 {
+			return nil
+		}
+		switch c := bytes.TrimSpace(obj.Content); {
+		case len(c) > 0 && c[0] == '[':
+			_ = json.Unmarshal(c, &m.Content)
+		case len(c) > 0 && c[0] == '"':
+			// 接口允许 content 直接是字符串
+			_ = json.Unmarshal(c, &m.Text)
+		}
+	}
+	return nil
 }
 
 // renderStream 把 stream-json 还原成人看的日志，并取出这场的用量。
+//
+// 按行解析：stream-json 一行一个事件。认不出的行（CLI 升级加的新事件、形状变了的
+// 字段、非 JSON 的杂音）原样照打、继续往下。以前用 json.Decoder 串着解，一行解不动
+// 就把剩下的整段倾进日志、result 事件随之错过，用量就没了——而 CLI 是自动升级的，
+// 事件形状会在无人值守时变。
 //
 // 换成流式 JSON 是为了拿 token 统计，但有三件事必须保住：
 //   - 模型的话要原样进日志（以前的文本输出就是这个，事后排查全靠它）；
 //   - 失败时错误正文要进日志——stream-json 下 stderr 是空的，配额/凭据/审核的
 //     提示只存在于 result 事件的 result 字段里，不打出来 Classify() 就成了瞎子；
-//   - 解析不动的时候把原始字节照打，绝不静默丢输出。
+//   - 绝不静默丢输出。
 func renderStream(r io.Reader, out io.Writer) (Usage, error) {
 	var u Usage
-	dec := json.NewDecoder(r)
+	br := bufio.NewReader(r)
 	var lastText string
-
 	for {
-		var ev streamEvent
-		if err := dec.Decode(&ev); err != nil {
-			if errors.Is(err, io.EOF) {
-				return u, nil
-			}
-			// 解析不动：把剩下的字节整段打出去。宁可日志难看，也不能让
-			// 「模型说了什么」和「为什么失败」一起消失。
-			rest, rerr := io.ReadAll(io.MultiReader(dec.Buffered(), r))
-			if rerr == nil && len(rest) > 0 {
-				out.Write(rest)
-				if !strings.HasSuffix(string(rest), "\n") {
+		line, rerr := br.ReadBytes('\n')
+		if len(bytes.TrimSpace(line)) > 0 {
+			var ev streamEvent
+			if err := json.Unmarshal(line, &ev); err != nil {
+				// 解析不动的行照打。宁可日志难看，也不能让「模型说了什么」
+				// 和「为什么失败」一起消失。
+				out.Write(line)
+				if !bytes.HasSuffix(line, []byte("\n")) {
 					fmt.Fprintln(out)
 				}
+			} else {
+				lastText = renderEvent(ev, lastText, &u, out)
 			}
-			return u, err
 		}
-
-		switch ev.Type {
-		case "assistant":
-			for _, b := range ev.Message.Content {
-				if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
-					fmt.Fprintln(out, b.Text)
-					lastText = b.Text
-				}
-			}
-		case "result":
-			u = Usage{
-				Input: ev.Usage.Input, Output: ev.Usage.Output,
-				CacheRead: ev.Usage.CacheRead, CacheWrite: ev.Usage.CacheWrite,
-				Thinking: ev.Usage.Details.Thinking,
-				CostUSD:  ev.Cost, Turns: ev.NumTurns, Known: true,
-			}
-			// 失败时错误正文只在这儿。成功时 result 是最后一段话的副本，不重复打。
-			if ev.IsError && strings.TrimSpace(ev.Result) != "" && ev.Result != lastText {
-				fmt.Fprintln(out, ev.Result)
-			}
+		if rerr == io.EOF {
+			return u, nil
+		}
+		if rerr != nil {
+			return u, rerr
 		}
 	}
+}
+
+// renderEvent 处理一个事件，返回更新后的「最后一段话」。
+func renderEvent(ev streamEvent, lastText string, u *Usage, out io.Writer) string {
+	switch ev.Type {
+	case "assistant":
+		for _, b := range ev.Message.Content {
+			if b.Type == "text" && strings.TrimSpace(b.Text) != "" {
+				fmt.Fprintln(out, b.Text)
+				lastText = b.Text
+			}
+		}
+	case "system":
+		// 工具调用被权限层自动拒绝（无人值守没有审批面）。模型会自己绕过去，
+		// 但这件事要留在日志里：以前只能从原样倾出来的 JSON 里看出来。
+		if ev.Subtype == "permission_denied" {
+			fmt.Fprintf(out, "⚠ 工具调用被拒（%s）：%s\n", ev.ToolName, strings.TrimSpace(ev.Message.Text))
+		}
+	case "result":
+		*u = Usage{
+			Input: ev.Usage.Input, Output: ev.Usage.Output,
+			CacheRead: ev.Usage.CacheRead, CacheWrite: ev.Usage.CacheWrite,
+			Thinking: ev.Usage.Details.Thinking,
+			CostUSD:  ev.Cost, Turns: ev.NumTurns, Known: true,
+		}
+		// 失败时错误正文只在这儿。成功时 result 是最后一段话的副本，不重复打。
+		if ev.IsError && strings.TrimSpace(ev.Result) != "" && ev.Result != lastText {
+			fmt.Fprintln(out, ev.Result)
+		}
+	}
+	return lastText
 }

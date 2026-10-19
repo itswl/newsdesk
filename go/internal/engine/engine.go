@@ -80,27 +80,28 @@ func claudeArgs(kind Kind, cfg *config.Config, settings, prompt string, danger b
 }
 
 // Run 把 prompt 交给引擎，输出直接流到 stdout/stderr（调用方已重定向到日志）。
+// 返回这次调用的用量（走 claude CLI 的引擎才有；codex 没有，Known 为假）。
 //
 // 危险模式（config 里的 DANGER=1）在这里生效：权限文件换成不设限制的那一份，
 // 去掉权限提示、工具白名单与 MCP 裁剪。判定从配置现取，所以同一个进程里跑不同
 // 配置的档（调度器热重读）不会串。
-func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
+func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) (Usage, error) {
 	danger := r.Cfg.Danger()
 	switch kind {
 	case Claude:
 		settings, err := sandbox.WriteSettings(r.Home, r.Root, danger)
 		if err != nil {
-			return fmt.Errorf("渲染权限文件: %w", err)
+			return Usage{}, fmt.Errorf("渲染权限文件: %w", err)
 		}
 		return r.execStream(ctx, nil, claudeArgs(Claude, r.Cfg, settings, prompt, danger)...)
 
 	case API:
 		if err := r.Cfg.Require("FALLBACK_BASE_URL", "FALLBACK_AUTH_TOKEN", "FALLBACK_MODEL"); err != nil {
-			return err
+			return Usage{}, err
 		}
 		settings, err := sandbox.WriteSettings(r.Home, r.Root, danger)
 		if err != nil {
-			return err
+			return Usage{}, err
 		}
 		// 端点地址归一化：claude 自己会拼 /v1/messages，配置里若带了 /v1
 		// 就会变成 /v1/v1/messages（实测 404）。
@@ -114,7 +115,7 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 	case Codex:
 		if danger {
 			// 危险模式：不套外层沙箱，整个 codex 进程不受限
-			return r.exec(ctx, nil, "codex", "exec",
+			return Usage{}, r.exec(ctx, nil, "codex", "exec",
 				"-m", r.Cfg.Get("CODEX_MODEL", "gpt-5.6-luna"), "-C", r.Root,
 				"--dangerously-bypass-approvals-and-sandbox", "--color", "never", prompt)
 		}
@@ -122,16 +123,16 @@ func (r *Runner) Run(ctx context.Context, kind Kind, prompt string) error {
 		if err != nil {
 			// 没有可用沙箱就拒绝：codex 自带的 workspace-write 不限制读，
 			// 无外层沙箱等于无防护
-			return err
+			return Usage{}, err
 		}
 		argv := append(wrap, "codex", "exec",
 			"-m", r.Cfg.Get("CODEX_MODEL", "gpt-5.6-luna"), "-C", r.Root,
 			// 自带那层关掉，避免与外层沙箱套娃
 			"--dangerously-bypass-approvals-and-sandbox", "--color", "never", prompt)
-		return r.exec(ctx, nil, argv[0], argv[1:]...)
+		return Usage{}, r.exec(ctx, nil, argv[0], argv[1:]...)
 
 	default:
-		return fmt.Errorf("未知引擎 %q（可选 claude | codex | api）", kind)
+		return Usage{}, fmt.Errorf("未知引擎 %q（可选 claude | codex | api）", kind)
 	}
 }
 
@@ -152,7 +153,7 @@ func (l *lockedWriter) Write(p []byte) (int, error) {
 }
 
 // execStream 跑 claude 并把 stream-json 还原成可读日志，末尾补一行用量。
-func (r *Runner) execStream(ctx context.Context, extraEnv []string, args ...string) error {
+func (r *Runner) execStream(ctx context.Context, extraEnv []string, args ...string) (Usage, error) {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = r.Root
 	cmd.Env = append(os.Environ(), extraEnv...)
@@ -162,29 +163,28 @@ func (r *Runner) execStream(ctx context.Context, extraEnv []string, args ...stri
 	}
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {
-		return err
+		return Usage{}, err
 	}
 	lw := &lockedWriter{w: out}
 	// stderr 直接进日志：模型告警、连接提示都在这儿
 	cmd.Stderr = lw
 	cmd.Stdin = nil
 	if err := cmd.Start(); err != nil {
-		return err
+		return Usage{}, err
 	}
 	u, rerr := renderStream(pipe, lw)
 	werr := cmd.Wait()
-	if u.Known {
-		fmt.Fprintln(lw, u.String())
-	}
+	// 用量行恒打印：没拿到 result（进程被信号杀掉、输出被截断）就写「没取到」。
+	// 不能写 0，也不能不写——「一直是 0」和「从来没有这一行」都不会有人发现。
+	fmt.Fprintln(lw, u.String())
 	if werr != nil {
-		return werr
+		return u, werr
 	}
 	if rerr != nil {
-		// 输出解析不动但进程正常退出：不因此判失败（报告可能已经写好），
-		// 但要留痕——不然「用量一直是 0」会没人发现
-		fmt.Fprintf(lw, "!! 输出解析中断（%v），用量可能不准\n", rerr)
+		// 读输出中途出错但进程正常退出：不因此判失败（报告可能已经写好），但要留痕
+		fmt.Fprintf(lw, "!! 读取输出中断（%v），用量可能不准\n", rerr)
 	}
-	return nil
+	return u, nil
 }
 
 func (r *Runner) exec(ctx context.Context, extraEnv []string, name string, args ...string) error {

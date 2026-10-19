@@ -273,6 +273,10 @@ func (l *Loop) Run(ctx context.Context) error {
 		l.logf("!! %v", err)
 		l.alert("newsdesk 调度状态异常", err.Error()+"\n已按空状态继续，今天的任务可能重跑。")
 	}
+	if st.FallbackSince != "" {
+		// 重启不该让人以为主引擎好了：这段还没结束，恢复时照样会报
+		l.logf("⚠ 主引擎失效中，兜底段自 %s 起（上次告警过，恢复时再报）", clock(st.FallbackSince))
+	}
 	_ = l.health(st, nil)
 
 	tk := time.NewTicker(l.Tick)
@@ -411,6 +415,13 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 
 	next, final := AfterRun(st.Tasks[t.Key], day, res.Engine, res.Failure, err, d.Late, end)
 	next.Danger = danger
+	if res.FellBack {
+		next.Fallback, next.FallbackWhy = true, string(res.PrimaryFailure)
+	}
+	if res.Usage.Known {
+		u := res.Usage
+		next.Usage = &u
+	}
 	st.Tasks[t.Key] = next
 	if e := st.Save(l.statePath); e != nil {
 		l.logf("!! 状态保存失败：%v", e)
@@ -418,6 +429,7 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 	if err == nil {
 		l.logf("[%s] 完成，用时 %s，%s", t.Key,
 			res.Duration.Round(time.Second), engine.Describe(l.Cfg, res.Engine))
+		l.noteFallback(st, t, next)
 		// 跑的途中配置文件改过：这一档是按开跑时那份配置建站发布的，期间要是按新配置
 		// 手动发布过，已经被它覆盖（09-29 丢通知开关就是这个形状）。新配置生效时重发一次。
 		if l.configMoved() {
@@ -442,6 +454,51 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 		body += "\n日志：" + res.LogPath
 	}
 	l.alert("newsdesk 任务失败", body)
+}
+
+// noteFallback 主引擎失效、兜底顶上的连续段：开始与结束各告警一次。
+//
+// 兜底成功时流水线看起来一切正常——报告照出、站点照发、status 全绿——只有日志里
+// 「完成，用时 …，api / …」那一行能看出来。2026-10-15 到 10-19 连续 17 档跑在兜底上，
+// 一条告警都没有，因为以前只有终局失败才告警。每档都推又等于教人忽略告警，所以按
+// 连续段：切过去时说一声，回来时再说一声。失败的档不动这个状态——它既没证明主引擎
+// 好了，也没证明兜底还在顶着。
+func (l *Loop) noteFallback(st *State, t task.Task, next TaskState) {
+	primary, _ := engine.Plan(l.Cfg)
+	used := engine.Describe(l.Cfg, engine.Kind(next.Engine))
+	switch {
+	case next.Fallback && st.FallbackSince == "":
+		st.FallbackSince = next.Finished
+		label, action := engine.Failure(next.FallbackWhy).Hint()
+		l.logf("[%s] ⚠ 主引擎 %s 失败（%s），这一档由兜底 %s 跑出；主引擎恢复前每档都会这样，不再重复告警",
+			t.Key, engine.Describe(l.Cfg, primary), label, used)
+		body := fmt.Sprintf("任务 %s（预定 %s）主引擎 %s 失败（%s），由兜底 %s 跑出并已照常发布。\n"+
+			"主引擎恢复前每档都会先试主引擎再落到兜底，这段不再重复告警；恢复时另报一条。",
+			t.Key, t.At, engine.Describe(l.Cfg, primary), label, used)
+		if action != "" {
+			body += "\n→ " + action
+		}
+		l.alert("newsdesk 主引擎失效，已切兜底", body)
+	case !next.Fallback && st.FallbackSince != "":
+		since := clock(st.FallbackSince)
+		st.FallbackSince = ""
+		l.logf("[%s] 主引擎已恢复（兜底段 %s 起）", t.Key, since)
+		l.alert("newsdesk 主引擎已恢复",
+			fmt.Sprintf("任务 %s（预定 %s）回到主引擎 %s。兜底段从 %s 起，到这一档为止。", t.Key, t.At, used, since))
+	default:
+		return
+	}
+	if err := st.Save(l.statePath); err != nil {
+		l.logf("!! 状态保存失败：%v", err)
+	}
+}
+
+// clock 把 RFC3339 缩成「10-15 06:35」，给人看的告警不需要秒和时区。
+func clock(rfc string) string {
+	if t, err := time.Parse(time.RFC3339, rfc); err == nil {
+		return t.Format("01-02 15:04")
+	}
+	return rfc
 }
 
 // audit 日终核对：今天四档里有没有没出报告的。

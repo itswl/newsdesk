@@ -35,6 +35,10 @@ type Result struct {
 	Output   string
 	Duration time.Duration
 	LogPath  string
+	// Usage 模型调用的用量；FellBack / PrimaryFailure 见 AnalyzeResult。
+	Usage          engine.Usage
+	FellBack       bool
+	PrimaryFailure engine.Failure
 }
 
 // Run 跑完一个任务的全流程。
@@ -96,6 +100,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	ar, err := Analyze(ctx, o.Task, o.Date, o.Cfg, o.Root, o.Home, out, o.Engine)
 	done()
 	res.Engine, res.Failure, res.Output = ar.Engine, ar.Failure, ar.Output
+	res.Usage, res.FellBack, res.PrimaryFailure = ar.Usage, ar.FellBack, ar.PrimaryFailure
 	if err != nil {
 		res.Duration = time.Since(start)
 		return res, err

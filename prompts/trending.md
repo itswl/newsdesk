@@ -47,6 +47,8 @@
 - `reports/<YYYY-MM-DD>/github-trending.md` —— 报告正文
 - `reports/<YYYY-MM-DD>/trending.json` —— 结构化数据，`_meta` 里记清楚抓取时刻、基线文件、窗口小时数、口径说明、下期该用哪个文件做基线
 
+**仓库里只写 `reports/<今天日期>/` 下的文件。** 辅助脚本、中间文件不要落在仓库里（放 `/tmp`，或直接在 Bash 里内联）。
+
 若因故只能出草稿，文件名加后缀 `github-trending_draftHHMM.md`；正式版出来后草稿保留不删。
 
 中文，语言简练专业。

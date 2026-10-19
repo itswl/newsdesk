@@ -2,6 +2,7 @@ package engine
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -214,9 +215,19 @@ func TestUsageLine(t *testing.T) {
 // 流式 JSON 要还原成人看的日志，同时把用量取出来。
 // 这里用两组真实的观测数据：一次成功、一次配额失败（失败时 stderr 是空的，
 // 错误正文只在 result 里——不打出来 Classify 就成了瞎子）。
+//
+// 成功那组夹着 claude CLI 2.1.303 实测会出现的几种「不是对象」的 message：
+// system/permission_denied 里 message 是字符串、thinking_tokens 事件根本没有 message、
+// user 事件的 content 是 tool_result 块。以前按对象声明，碰到字符串整段解析放弃，
+// 后面的 result 事件错过，用量行就丢了（2026-10-19 两档）。
 func TestRenderStream(t *testing.T) {
 	okJSONL := `{"type":"system","subtype":"init","tools":["Read"]}
 {"type":"assistant","message":{"content":[{"type":"text","text":"第一段话"}]}}
+{"type":"system","subtype":"thinking_tokens","estimated_tokens":50,"estimated_tokens_delta":50}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"for f in *.json; do cat $f; done"}}]}}
+{"type":"system","subtype":"permission_denied","tool_name":"Bash","tool_use_id":"t1","message":"Permission for this tool use was denied. What required approval: A variable in this command can't be checked before it runs"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"t1","type":"tool_result","content":"Permission for this tool use was denied.","is_error":true}]}}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour"}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"好的。"}]}}
 {"type":"result","is_error":false,"num_turns":3,"total_cost_usd":0.0013,"result":"好的。","usage":{"input_tokens":243,"output_tokens":4,"cache_read_input_tokens":1344,"cache_creation_input_tokens":7,"output_tokens_details":{"thinking_tokens":2}}}
 `
@@ -234,6 +245,12 @@ func TestRenderStream(t *testing.T) {
 	}
 	if !u.Known || u.Input != 243 || u.Output != 4 || u.CacheRead != 1344 || u.CacheWrite != 7 || u.Turns != 3 {
 		t.Errorf("用量取错：%+v", u)
+	}
+	if !strings.Contains(out, "工具调用被拒（Bash）") || !strings.Contains(out, "can't be checked") {
+		t.Errorf("权限拒绝要以人看的形式留在日志里：%s", out)
+	}
+	if strings.Contains(out, `{"type":`) {
+		t.Errorf("认得的事件不该以原始 JSON 倾进日志：%s", out)
 	}
 
 	failJSONL := `{"type":"rate_limit_event"}
@@ -253,15 +270,64 @@ func TestRenderStream(t *testing.T) {
 	}
 }
 
-// 解析不动时不能吞输出：剩下的字节要照打，因为「为什么失败」可能就在里面。
-func TestRenderStreamKeepsGarbage(t *testing.T) {
-	in := "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"开头\"}]}}\n这不是 JSON\n"
+// 解析不动的行不能吞：照打，而且**继续往下解**——「为什么失败」可能就在那一行，
+// 而用量在它后面。以前一行解不动就把剩下的整段倾出去、result 跟着丢。
+func TestRenderStreamKeepsGarbageAndGoesOn(t *testing.T) {
+	in := "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"开头\"}]}}\n" +
+		"这不是 JSON\n" +
+		"{\"type\":\"result\",\"is_error\":false,\"num_turns\":2,\"result\":\"开头\",\"usage\":{\"input_tokens\":10,\"output_tokens\":1}}"
 	var b strings.Builder
-	if _, err := renderStream(strings.NewReader(in), &b); err == nil {
-		t.Error("应当报解析错误")
+	u, err := renderStream(strings.NewReader(in), &b)
+	if err != nil {
+		t.Fatalf("杂音行不该让整个流失败：%v", err)
 	}
 	if !strings.Contains(b.String(), "这不是 JSON") {
-		t.Errorf("非 JSON 的尾部被吞了：%s", b.String())
+		t.Errorf("非 JSON 的行被吞了：%s", b.String())
+	}
+	if !u.Known || u.Input != 10 || u.Turns != 2 {
+		t.Errorf("杂音之后的 result 应当照常取到（最后一行没有换行符也要算）：%+v", u)
+	}
+}
+
+// message 字段三种形状都要能过：对象、字符串、content 是字符串的对象。
+func TestStreamMessageShapes(t *testing.T) {
+	var ev streamEvent
+	if err := json.Unmarshal([]byte(`{"type":"system","message":"denied: 原因"}`), &ev); err != nil {
+		t.Fatalf("字符串 message 不该报错：%v", err)
+	}
+	if ev.Message.Text != "denied: 原因" {
+		t.Errorf("字符串 message 没留下来：%+v", ev.Message)
+	}
+	ev = streamEvent{}
+	if err := json.Unmarshal([]byte(`{"type":"user","message":{"role":"user","content":"纯文本"}}`), &ev); err != nil || ev.Message.Text != "纯文本" {
+		t.Errorf("content 为字符串的 message：err=%v %+v", err, ev.Message)
+	}
+	ev = streamEvent{}
+	if err := json.Unmarshal([]byte(`{"type":"x","message":42}`), &ev); err != nil {
+		t.Errorf("认不出的形状当没有，不报错：%v", err)
+	}
+}
+
+// 用量要落进 state/schedule.json，所以 JSON 往返不能丢字段；Known 不进文件。
+func TestUsageJSONRoundTrip(t *testing.T) {
+	u := Usage{Input: 1, Output: 2, CacheRead: 3, CacheWrite: 4, Thinking: 5, CostUSD: 0.5, Turns: 6, Known: true}
+	raw, err := json.Marshal(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "Known") || strings.Contains(string(raw), "known") {
+		t.Errorf("Known 不该序列化：%s", raw)
+	}
+	var back Usage
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	back.Known = true
+	if back != u {
+		t.Errorf("往返丢字段：%+v → %+v", u, back)
+	}
+	if s := u.Brief(false); strings.Contains(s, "$") || !strings.Contains(s, "6 轮") {
+		t.Errorf("status 那行不带成本：%s", s)
 	}
 }
 

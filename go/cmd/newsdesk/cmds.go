@@ -304,7 +304,16 @@ func cmdStatus(ctx context.Context, args []string) error {
 		if ts.Danger && ts.Date == today {
 			note += "（危险模式跑的）"
 		}
+		// 主引擎失败、兜底顶上的档也要一眼看出来：兜底成功时其他地方全是绿的
+		if ts.Fallback && ts.Date == today {
+			note += fmt.Sprintf("（主引擎失败，兜底 %s 跑的）", ts.Engine)
+		}
 		fmt.Printf("  %s %-9s %s  %s%s\n", mark, t.Key, t.At, note, trail)
+		// 这一档花了多少。日志会滚，状态文件里这份才能随时回答「这档多贵」。
+		// 成本只在 claude 引擎下打：那是 CLI 按 Anthropic 价目估的，第三方网关对不上任何账单
+		if ts.Usage != nil && ts.Date == today {
+			fmt.Printf("    用量：%s\n", ts.Usage.Brief(ts.Engine == string(engine.Claude)))
+		}
 	}
 	switch {
 	case !haveHealth:

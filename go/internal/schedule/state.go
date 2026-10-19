@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/itswl/newsdesk/internal/engine"
 )
 
 type TaskState struct {
@@ -26,12 +28,32 @@ type TaskState struct {
 	Danger      bool    `json:"danger,omitempty"`
 	LastAttempt int64   `json:"last_attempt_ts,omitempty"`
 	LateHours   float64 `json:"late_hours,omitempty"`
+	// Fallback 这一档是主引擎失败、由兜底引擎跑出来的；FallbackWhy 是主引擎当时的
+	// 失败类别（quota / balance / auth / moderation / other）。
+	//
+	// 兜底成功时流水线「看起来正常」：报告照出、站点照发、status 全绿，只有日志里
+	// 「完成，用时 …，api / …」那一行能看出来。2026-10-15 到 10-19 连续 17 档跑在
+	// 兜底上没人知道，就是缺这一项——日志会滚，这里留得住。
+	Fallback    bool   `json:"fallback,omitempty"`
+	FallbackWhy string `json:"fallback_why,omitempty"`
+	// Usage 这一档模型调用的累计用量（claude CLI 的 result 事件）。没拿到就不写，
+	// 不能写 0。
+	Usage *engine.Usage `json:"usage,omitempty"`
 }
 
 type State struct {
 	Tasks map[string]TaskState `json:"-"`
 	Audit string               `json:"-"`
+	// FallbackSince 当前这段「主引擎失效、兜底顶上」是从哪一档开始的（RFC3339），
+	// 空 = 主引擎正常。开始与结束各告警一次，靠它分辨「又一档」和「新的一段」。
+	FallbackSince string `json:"-"`
 }
+
+// 状态文件里非任务的键。任务名不会以下划线开头。
+const (
+	keyAudit         = "_audit"
+	keyFallbackSince = "_fallback_since"
+)
 
 // Load 读调度状态。
 //
@@ -52,8 +74,12 @@ func Load(path string) (*State, error) {
 		return s, fmt.Errorf("状态文件损坏（%w）——当日任务会被当成未跑过而重跑: %s", err, path)
 	}
 	for k, v := range m {
-		if k == "_audit" {
+		switch k {
+		case keyAudit:
 			_ = json.Unmarshal(v, &s.Audit)
+			continue
+		case keyFallbackSince:
+			_ = json.Unmarshal(v, &s.FallbackSince)
 			continue
 		}
 		var ts TaskState
@@ -71,7 +97,10 @@ func (s *State) Save(path string) error {
 		m[k] = v
 	}
 	if s.Audit != "" {
-		m["_audit"] = s.Audit
+		m[keyAudit] = s.Audit
+	}
+	if s.FallbackSince != "" {
+		m[keyFallbackSince] = s.FallbackSince
 	}
 	b, err := json.MarshalIndent(m, "", " ")
 	if err != nil {

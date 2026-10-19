@@ -62,6 +62,12 @@ type AnalyzeResult struct {
 	Attempts int
 	Failure  engine.Failure
 	Output   string // 末尾若干 KB，用于分类与告警
+	// Usage 最后一次尝试的用量（成功时就是写出报告的那次）。
+	Usage engine.Usage
+	// FellBack 主引擎失败、这份报告由兜底跑出；PrimaryFailure 是主引擎当时的失败类别。
+	// 兜底成功时流水线看起来一切正常，只有这两项能把「切过引擎」这件事带给调度器。
+	FellBack       bool
+	PrimaryFailure engine.Failure
 }
 
 // Analyze 把 prompt 交给引擎，失败时按分类决定是否兜底。
@@ -98,15 +104,16 @@ func Analyze(ctx context.Context, t task.Task, date string, cfg *config.Config,
 		r := &engine.Runner{Home: home, Root: root, Cfg: cfg, Out: io.MultiWriter(out, ring)}
 
 		runCtx, cancel := context.WithTimeout(ctx, time.Duration(task.TaskTimeoutMin)*time.Minute)
-		err := r.Run(runCtx, kind, prompt)
+		u, err := r.Run(runCtx, kind, prompt)
 		cancel()
-		res.Output = ring.String()
+		res.Output, res.Usage = ring.String(), u
 
 		if err == nil {
 			// 引擎退出码为 0 不等于报告写出来了：模型可能「完成」了但没落盘。
 			// 只认文件，不认退出码。
 			if _, ok := ReportPath(root, date, t); ok {
 				res.Failure = ""
+				res.FellBack = kind != primary
 				return res, nil
 			}
 			err = errors.New("引擎正常退出，但 reports/" + date + "/ 下没有产出文件")
@@ -124,6 +131,7 @@ func Analyze(ctx context.Context, t task.Task, date string, cfg *config.Config,
 			fmt.Fprintf(out, "  → %s\n", action)
 		}
 		if fallback != "" && kind == primary {
+			res.PrimaryFailure = res.Failure
 			fmt.Fprintf(out, "  → 换兜底引擎 %s 再试一次\n", fallback)
 		}
 	}
