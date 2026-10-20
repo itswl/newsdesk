@@ -7,6 +7,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/itswl/newsdesk/internal/config"
@@ -25,8 +26,11 @@ var source = map[string]string{
 // 所有联网都在这一层。分析层跑在沙箱里出不了网，这是两个引擎可互换的前提——
 // 没有联网能力的引擎会转而用 shell 去本地翻文件硬凑答案，答案碰巧对但来源
 // 完全不可控。
-func Collect(ctx context.Context, key, date string, cfg *config.Config, st *store.Store) error {
+//
+// out 是这一档的任务日志：每个源的抓取结果要落在那里，不能只进 scheduler.log。
+func Collect(ctx context.Context, key, date string, cfg *config.Config, st *store.Store, out io.Writer) error {
 	c := fetch.NewClient(30 * time.Second)
+	c.Out = out
 	switch key {
 	case "ai":
 		return fetch.AINews(ctx, c, st, date, fetch.AIOpts{
@@ -50,10 +54,10 @@ func Collect(ctx context.Context, key, date string, cfg *config.Config, st *stor
 }
 
 // History 生成跨期比对。没有历史不是错误——首期本来就没有。
-func History(key, date string, st *store.Store) error {
+func History(key, date string, st *store.Store, out io.Writer) error {
 	src, ok := source[key]
 	if !ok {
 		return fmt.Errorf("未知任务 %q", key)
 	}
-	return history.Build(st, src, date)
+	return history.Build(st, src, date, out)
 }

@@ -56,7 +56,7 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error 
 			nItem += len(s.Data)
 		}
 	}
-	fmt.Printf("分类 %d，源 %d，条目 %d\n", len(resp.Data), nSrc, nItem)
+	fmt.Fprintf(c.w(), "分类 %d，源 %d，条目 %d\n", len(resp.Data), nSrc, nItem)
 
 	// 目录按**运行日期**分，不按源数据自己的日期。
 	//
@@ -108,13 +108,13 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error 
 		[]byte(strings.Join(lines, "\n")), 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("-> %s/{raw.json, parsed.txt}\n", st.RelTo(dd))
+	fmt.Fprintf(c.w(), "-> %s/{raw.json, parsed.txt}\n", st.RelTo(dd))
 	if len(stale) > 0 {
 		var parts []string
 		for _, s := range stale {
 			parts = append(parts, fmt.Sprintf("%s(%s, 滞后%.1fh)", s.name, s.ts, s.lag))
 		}
-		fmt.Println("⚠ 滞后源: " + strings.Join(parts, "; "))
+		fmt.Fprintln(c.w(), "⚠ 滞后源: "+strings.Join(parts, "; "))
 	}
 	return nil
 }

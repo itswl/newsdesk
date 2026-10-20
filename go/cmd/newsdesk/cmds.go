@@ -87,10 +87,10 @@ func cmdFetch(ctx context.Context, args []string) error {
 		return err
 	}
 	st := store.New(root)
-	if err := pipeline.Collect(ctx, t.Key, *date, cfg, st); err != nil {
+	if err := pipeline.Collect(ctx, t.Key, *date, cfg, st, os.Stdout); err != nil {
 		return err
 	}
-	if err := pipeline.History(t.Key, *date, st); err != nil {
+	if err := pipeline.History(t.Key, *date, st, os.Stdout); err != nil {
 		fmt.Printf("跨期比对跳过：%v\n", err)
 	}
 	return nil
@@ -183,7 +183,7 @@ func cmdLeakcheck(ctx context.Context, args []string) error {
 	if len(dirs) == 0 {
 		dirs = []string{filepath.Join(root, "site"), filepath.Join(root, "reports")}
 	}
-	return pipeline.LeakCheck(root, cfg, dirs...)
+	return pipeline.LeakCheck(root, cfg, os.Stdout, dirs...)
 }
 
 func cmdPrune(ctx context.Context, args []string) error {

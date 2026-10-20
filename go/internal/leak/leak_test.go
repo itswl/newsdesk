@@ -1,6 +1,7 @@
 package leak
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,5 +84,27 @@ func TestOnlyScansTextOutputs(t *testing.T) {
 	write(t, d, "x.png", "ghp_EXAMPLE0123456789EXAMPLE0123456789")
 	if h := Scan([]string{d}, nil); len(h) != 0 {
 		t.Errorf("不该扫非文本产出: %+v", h)
+	}
+}
+
+// 结果写进调用方给的 writer（流水线给的是这一档的任务日志）。以前直接打到标准输出，
+// 守护进程下只落在 scheduler.log：单档日志里看不出做没做过自检，拒绝发布时也看不到
+// 是哪个文件哪一行。
+func TestReportWritesToGivenWriter(t *testing.T) {
+	var buf bytes.Buffer
+	if Report(&buf, "/repo", nil) {
+		t.Fatal("没有命中不该报有")
+	}
+	if !strings.Contains(buf.String(), "未发现凭据") {
+		t.Fatalf("没有命中时也要留一行：%q", buf.String())
+	}
+
+	buf.Reset()
+	hits := []Hit{{File: "/repo/reports/2026-10-20/momoyu.md", Line: 3, What: "EXAMPLE 形状"}}
+	if !Report(&buf, "/repo", hits) {
+		t.Fatal("有命中应报有")
+	}
+	if !strings.Contains(buf.String(), "reports/2026-10-20/momoyu.md:3") {
+		t.Fatalf("要写出相对路径与行号：%q", buf.String())
 	}
 }

@@ -10,6 +10,7 @@ package history
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -81,7 +82,12 @@ var rePunct = regexp.MustCompile(`[【】\[\]（）()「」“”"'：:，,。.�
 func NormTitle(t string) string { return strings.ToLower(rePunct.ReplaceAllString(t, "")) }
 
 // Build 算一个源的跨期比对并写出 history.json。
-func Build(st *store.Store, src, date string) error {
+//
+// w 是这一档的任务日志；nil 时写标准输出。
+func Build(st *store.Store, src, date string, w io.Writer) error {
+	if w == nil {
+		w = os.Stdout
+	}
 	dd := filepath.Join(st.Root, "data", src, date)
 	if fi, err := os.Stat(dd); err != nil || !fi.IsDir() {
 		return fmt.Errorf("没有 %s 的 %s 数据", src, date)
@@ -110,7 +116,7 @@ func Build(st *store.Store, src, date string) error {
 	}
 	key := map[string]string{"ainews": "new_count", "momoyu": "new_today_count",
 		"douban": "history_days", "trending": "history_boards"}[src]
-	fmt.Printf("跨期比对 -> %s/history.json（回看 %d 天，%s=%v）\n",
+	fmt.Fprintf(w, "跨期比对 -> %s/history.json（回看 %d 天，%s=%v）\n",
 		st.RelTo(dd), Window, key, out[key])
 	return nil
 }

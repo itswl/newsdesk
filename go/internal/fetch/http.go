@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -19,6 +20,19 @@ const UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
 type Client struct {
 	HTTP    *http.Client
 	Retries int
+	// Out 每个源的抓取结果写到哪；nil 时写标准输出。
+	//
+	// 流水线把它设成这一档的任务日志。以前直接 fmt.Printf：守护进程下标准输出只落在
+	// scheduler.log、还没有任务前缀，单档日志里只剩一句「采集 用时 8s」，哪个源抓取
+	// 失败、窗内几条，全看不到。
+	Out io.Writer
+}
+
+func (c *Client) w() io.Writer {
+	if c.Out != nil {
+		return c.Out
+	}
+	return os.Stdout
 }
 
 func NewClient(timeout time.Duration) *Client {

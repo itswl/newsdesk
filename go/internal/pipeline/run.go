@@ -83,13 +83,13 @@ func Run(ctx context.Context, o Options) (Result, error) {
 
 	if !o.SkipFetch {
 		done := step(1, "采集")
-		err := Collect(ctx, o.Task.Key, o.Date, o.Cfg, st)
+		err := Collect(ctx, o.Task.Key, o.Date, o.Cfg, st, out)
 		done()
 		if err != nil {
 			return res, fmt.Errorf("采集失败: %w", err)
 		}
 		done = step(2, "跨期比对")
-		err = History(o.Task.Key, o.Date, st)
+		err = History(o.Task.Key, o.Date, st, out)
 		done()
 		if err != nil {
 			// 首期没有历史是正常的，不该因此整档不跑

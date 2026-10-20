@@ -10,6 +10,7 @@ package leak
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -78,20 +79,26 @@ func Scan(dirs []string, secrets map[string]string) []Hit {
 	return hits
 }
 
-// Report 打印并返回是否有命中。
-func Report(root string, hits []Hit) bool {
+// Report 打印并返回是否有命中。w 是这一档的任务日志；nil 时写标准输出。
+//
+// 以前直接 fmt.Println：守护进程下只落在 scheduler.log，单档日志里看不出这一档做没做过
+// 自检，拒绝发布时也看不到是哪个文件哪一行。
+func Report(w io.Writer, root string, hits []Hit) bool {
+	if w == nil {
+		w = os.Stdout
+	}
 	if len(hits) == 0 {
-		fmt.Println("  ✓ 产出中未发现凭据")
+		fmt.Fprintln(w, "  ✓ 产出中未发现凭据")
 		return false
 	}
-	fmt.Println("!! 产出里混进了凭据，拒绝发布：")
+	fmt.Fprintln(w, "!! 产出里混进了凭据，拒绝发布：")
 	for _, h := range hits {
 		rel, err := filepath.Rel(root, h.File)
 		if err != nil {
 			rel = h.File
 		}
-		fmt.Printf("   %s:%d  %s\n", rel, h.Line, h.What)
+		fmt.Fprintf(w, "   %s:%d  %s\n", rel, h.Line, h.What)
 	}
-	fmt.Println("!! 先把这些内容从报告里删掉，确认凭据是否需要轮换，再重新发布。")
+	fmt.Fprintln(w, "!! 先把这些内容从报告里删掉，确认凭据是否需要轮换，再重新发布。")
 	return true
 }

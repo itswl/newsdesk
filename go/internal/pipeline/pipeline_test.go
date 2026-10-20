@@ -3,6 +3,7 @@ package pipeline
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -233,5 +234,34 @@ func TestResetScratchDoesNotFollowSymlinks(t *testing.T) {
 	}
 	if _, err := os.Lstat(link); !os.IsNotExist(err) {
 		t.Fatalf("链接本身应被摘掉：%v", err)
+	}
+}
+
+// 流水线各步骤的输出必须走调用方给的 writer，不能直接打到标准输出。
+//
+// 守护进程下标准输出只落在 scheduler.log、还没有任务前缀，单档日志里就少了那一块，
+// 而且不报错：翻译的用量、每个源的抓取结果、凭据自检的结论先后都这样丢过。新加的
+// 打印照抄 fmt.Printf 的话，这里会拦下。
+func TestStepsDoNotPrintToStdout(t *testing.T) {
+	direct := regexp.MustCompile(`\bfmt\.Print(f|ln)?\(`)
+	for _, pkg := range []string{"fetch", "history", "leak", "translate", "engine"} {
+		files, err := filepath.Glob(filepath.Join("..", pkg, "*.go"))
+		if err != nil || len(files) == 0 {
+			t.Fatalf("找不到 internal/%s 的源文件：%v", pkg, err)
+		}
+		for _, f := range files {
+			if strings.HasSuffix(f, "_test.go") {
+				continue
+			}
+			b, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, line := range strings.Split(string(b), "\n") {
+				if direct.MatchString(line) {
+					t.Errorf("%s:%d 直接打到标准输出，改用传进来的 writer：%s", f, i+1, strings.TrimSpace(line))
+				}
+			}
+		}
 	}
 }

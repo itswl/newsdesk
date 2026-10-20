@@ -134,9 +134,11 @@ func Republish(ctx context.Context, root string, cfg *config.Config, dry bool, o
 
 // LeakCheck 发布前扫产出。命中就拒绝发布——报告第二天就在公开站点上，
 // 沙箱禁网拦不住「写进报告」这条路径。
-func LeakCheck(root string, cfg *config.Config, dirs ...string) error {
+//
+// out 是结果写到哪（任务日志或终端）；nil 时写标准输出。
+func LeakCheck(root string, cfg *config.Config, out io.Writer, dirs ...string) error {
 	hits := leak.Scan(dirs, secretValues(cfg))
-	if leak.Report(root, hits) {
+	if leak.Report(out, root, hits) {
 		return fmt.Errorf("产出里发现 %d 处疑似凭据，已拒绝发布", len(hits))
 	}
 	return nil
@@ -156,7 +158,7 @@ func LeakGate(root string, cfg *config.Config, out io.Writer, dirs ...string) er
 		}
 		return nil
 	}
-	return LeakCheck(root, cfg, dirs...)
+	return LeakCheck(root, cfg, out, dirs...)
 }
 
 // Publish 同步到对象存储。没配桶就跳过，不是错误。

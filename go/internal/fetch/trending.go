@@ -115,7 +115,7 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 	if err := store.WriteJSON(filepath.Join(dd, "page.json"), board, true); err != nil {
 		return err
 	}
-	fmt.Printf("榜单 %d 项 -> %s/page.json\n", len(board), st.RelTo(dd))
+	fmt.Fprintf(c.w(), "榜单 %d 项 -> %s/page.json\n", len(board), st.RelTo(dd))
 
 	// 追踪集合 = 今日榜 + **上一期榜单**，不是上一期快照里的全部仓库。
 	// 后者会把它自己的 prev 一并继承、逐日累积（实测 9 天涨到 49 个）。
@@ -143,7 +143,7 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 	if baseSnap != nil {
 		baseTS, _ = time.Parse(time.RFC3339, firstNonEmptyStr(baseSnap.TSStart, baseSnap.TSEnd))
 	}
-	fmt.Printf("基线: %s (%s)\n", orDash(st.RelTo(basePath), basePath == ""), orDash(baseTS.Format(time.RFC3339), baseTS.IsZero()))
+	fmt.Fprintf(c.w(), "基线: %s (%s)\n", orDash(st.RelTo(basePath), basePath == ""), orDash(baseTS.Format(time.RFC3339), baseTS.IsZero()))
 
 	onBoard := map[string]bool{}
 	repos := make([]string, 0, len(board)+len(prev))
@@ -159,7 +159,7 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 
 	budget := gh.Remaining(ctx)
 	authed := gh.Authed() || budget > 100
-	fmt.Printf("API 预算 %d 次（%s）\n", budget, ifStr(authed, "已认证", "未认证，将按预算降级"))
+	fmt.Fprintf(c.w(), "API 预算 %d 次（%s）\n", budget, ifStr(authed, "已认证", "未认证，将按预算降级"))
 
 	snap := Snapshot{
 		TSStart: time.Now().Format(time.RFC3339), BoardSize: len(board),
@@ -192,7 +192,7 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 		snap.Repos[r] = s
 	}
 	if n := len(snap.SkippedRepos); n > 0 {
-		fmt.Printf("⚠ 预算不足，%d 个仓库未采集\n", n)
+		fmt.Fprintf(c.w(), "⚠ 预算不足，%d 个仓库未采集\n", n)
 	}
 
 	// 榜单项目的补充指标按剩余预算花。未认证时它们是第一批被牺牲的——
@@ -224,7 +224,7 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 		}
 		snap.BoardExtras[x.Repo] = e
 	}
-	fmt.Printf("补充指标 %d 项%s\n", len(snap.BoardExtras),
+	fmt.Fprintf(c.w(), "补充指标 %d 项%s\n", len(snap.BoardExtras),
 		ifStr(len(snap.SkippedExtras) > 0, fmt.Sprintf("，%d 项因预算跳过", len(snap.SkippedExtras)), ""))
 
 	snap.TSEnd = time.Now().Format(time.RFC3339)
@@ -242,9 +242,9 @@ func Trending(ctx context.Context, c *Client, gh *GitHub, st *store.Store, date,
 	if err := store.WriteJSON(fn, snap, true); err != nil {
 		return err
 	}
-	fmt.Printf("快照 %d 项（%d 个 404）-> %s\n", len(snap.Repos), len(snap.Errors), st.RelTo(fn))
+	fmt.Fprintf(c.w(), "快照 %d 项（%d 个 404）-> %s\n", len(snap.Repos), len(snap.Errors), st.RelTo(fn))
 	if snap.WindowHours != nil {
-		fmt.Printf("窗口 %.2fh\n", *snap.WindowHours)
+		fmt.Fprintf(c.w(), "窗口 %.2fh\n", *snap.WindowHours)
 	}
 	return nil
 }

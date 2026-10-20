@@ -121,23 +121,23 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 	// Anthropic 没有 RSS，单独解析页面
 	if items, err := anthropicNews(ctx, c); err != nil {
 		doc.Sources = append(doc.Sources, aiStat{"Anthropic", "FAIL", 0, 0})
-		fmt.Printf("  %-18s 抓取失败: %v\n", "Anthropic", err)
+		fmt.Fprintf(c.w(), "  %-18s 抓取失败: %v\n", "Anthropic", err)
 	} else {
 		kept := keepFresh(items, cutoff, 0)
 		doc.Items = append(doc.Items, kept...)
 		doc.Sources = append(doc.Sources, aiStat{"Anthropic", "OK", len(items), len(kept)})
-		fmt.Printf("  %-18s 总 %-4d 窗内 %d\n", "Anthropic", len(items), len(kept))
+		fmt.Fprintf(c.w(), "  %-18s 总 %-4d 窗内 %d\n", "Anthropic", len(items), len(kept))
 	}
 
 	// Qwen 没有可用的 RSS，走 Hugging Face 的组织接口（见 qwenModels）
 	if items, err := qwenModels(ctx, c); err != nil {
 		doc.Sources = append(doc.Sources, aiStat{"Qwen", "FAIL", 0, 0})
-		fmt.Printf("  %-18s 抓取失败: %v\n", "Qwen", err)
+		fmt.Fprintf(c.w(), "  %-18s 抓取失败: %v\n", "Qwen", err)
 	} else {
 		kept := keepFresh(items, cutoff, 0)
 		doc.Items = append(doc.Items, kept...)
 		doc.Sources = append(doc.Sources, aiStat{"Qwen", "OK", len(items), len(kept)})
-		fmt.Printf("  %-18s 总 %-4d 窗内 %d\n", "Qwen", len(items), len(kept))
+		fmt.Fprintf(c.w(), "  %-18s 总 %-4d 窗内 %d\n", "Qwen", len(items), len(kept))
 	}
 
 	for _, f := range Feeds {
@@ -147,7 +147,7 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 		body, err := c.Get(ctx, f.URL, nil)
 		if err != nil {
 			doc.Sources = append(doc.Sources, aiStat{f.Name, "FAIL", 0, 0})
-			fmt.Printf("  %-18s 抓取失败: %v\n", f.Name, err)
+			fmt.Fprintf(c.w(), "  %-18s 抓取失败: %v\n", f.Name, err)
 			continue
 		}
 		recs := parseFeed(body)
@@ -164,16 +164,16 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 		kept := keepFresh(recs, cutoff, 0)
 		doc.Items = append(doc.Items, kept...)
 		doc.Sources = append(doc.Sources, aiStat{f.Name, "OK", len(recs), len(kept)})
-		fmt.Printf("  %-18s 总 %-4d 窗内 %d\n", f.Name, len(recs), len(kept))
+		fmt.Fprintf(c.w(), "  %-18s 总 %-4d 窗内 %d\n", f.Name, len(recs), len(kept))
 	}
 
 	// HN Algolia：按分数排序的近期高热帖，与 HN 首页互补
 	if n, err := hnAlgolia(ctx, c, &doc, o.Hours); err != nil {
 		doc.Sources = append(doc.Sources, aiStat{"HN Algolia", "FAIL", 0, 0})
-		fmt.Printf("  HN Algolia 失败: %v\n", err)
+		fmt.Fprintf(c.w(), "  HN Algolia 失败: %v\n", err)
 	} else {
 		doc.Sources = append(doc.Sources, aiStat{"HN Algolia", "OK", n, n})
-		fmt.Printf("  %-18s AI 相关 %d\n", "HN Algolia", n)
+		fmt.Fprintf(c.w(), "  %-18s AI 相关 %d\n", "HN Algolia", n)
 	}
 
 	if err := store.WriteJSON(filepath.Join(dd, "items.json"), doc, true); err != nil {
@@ -183,7 +183,7 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 		[]byte(digest(doc)), 0o644); err != nil {
 		return err
 	}
-	fmt.Printf("-> %s/{items.json, digest.txt}  共 %d 条\n", st.RelTo(dd), len(doc.Items))
+	fmt.Fprintf(c.w(), "-> %s/{items.json, digest.txt}  共 %d 条\n", st.RelTo(dd), len(doc.Items))
 	return nil
 }
 

@@ -72,14 +72,14 @@ func Douban(ctx context.Context, c *Client, st *store.Store, date string, o Doub
 	if err := store.WriteJSON(filepath.Join(dd, "list.json"), list.Subjects, true); err != nil {
 		return err
 	}
-	fmt.Printf("列表 %d 部\n", len(list.Subjects))
+	fmt.Fprintf(c.w(), "列表 %d 部\n", len(list.Subjects))
 
 	meta := doubanMeta{Date: date, Tag: o.Tag, Sort: o.Sort, OK: []string{}, Failed: []string{}}
 	for _, s := range list.Subjects {
 		d, err := doubanDetail(ctx, c, s.ID)
 		if err != nil {
 			meta.Failed = append(meta.Failed, s.ID)
-			fmt.Printf("  FAIL %s (%v)\n", s.ID, err)
+			fmt.Fprintf(c.w(), "  FAIL %s (%v)\n", s.ID, err)
 			sleep(ctx, o.Pause)
 			continue
 		}
@@ -87,13 +87,13 @@ func Douban(ctx context.Context, c *Client, st *store.Store, date string, o Doub
 			return err
 		}
 		meta.OK = append(meta.OK, s.ID)
-		fmt.Printf("  OK   %s  %v  %v\n", s.ID, d["title"], ratingValue(d))
+		fmt.Fprintf(c.w(), "  OK   %s  %v  %v\n", s.ID, d["title"], ratingValue(d))
 		sleep(ctx, o.Pause)
 	}
 	if err := store.WriteJSON(filepath.Join(dd, "meta.json"), meta, true); err != nil {
 		return err
 	}
-	fmt.Printf("成功 %d，失败 %d -> %s\n", len(meta.OK), len(meta.Failed), st.RelTo(dd))
+	fmt.Fprintf(c.w(), "成功 %d，失败 %d -> %s\n", len(meta.OK), len(meta.Failed), st.RelTo(dd))
 	return nil
 }
 
