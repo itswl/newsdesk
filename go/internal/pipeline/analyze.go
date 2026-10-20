@@ -12,6 +12,7 @@ import (
 
 	"github.com/itswl/newsdesk/internal/config"
 	"github.com/itswl/newsdesk/internal/engine"
+	"github.com/itswl/newsdesk/internal/sandbox"
 	"github.com/itswl/newsdesk/internal/task"
 )
 
@@ -66,9 +67,9 @@ func Prompt(root, key, date string) (string, error) {
 // 目录之外要审批；在 Bash 里用 heredoc / python3 -c 内联带引号花括号的代码（字典、
 // f-string）会被 CLI 的命令解析器判成「展开混淆」，也要审批。2026-10-19 写进 prompt
 // 的「放 /tmp，或直接在 Bash 里内联」两条路，10-20 那档 trending 都撞了一遍，最后
-// 把脚本写在了仓库根上。仓库里是两层都放行的地方：Write 在工作目录内自动通过，沙箱
-// 对仓库根放行写入。
-func ScratchDir(key string) string { return "tmp/" + key }
+// 把脚本写在了仓库根上。tmp/ 是两层都放行的地方（sandbox.WritableDirs）：Write 有
+// allow 规则、免审批，沙箱的拒写清单也不含它。
+func ScratchDir(key string) string { return sandbox.ScratchBase + "/" + key }
 
 // resetScratch 清空 <root>/tmp/<key>；keep 为真时再建一个空的（开跑前），为假时只删（收尾）。
 //
@@ -76,7 +77,7 @@ func ScratchDir(key string) string { return "tmp/" + key }
 // 跟着一条指向仓库外的 tmp 链接去删 tmp/<key>，删掉的就是仓库外的目录。所以 tmp 不是
 // 目录就先删它本身（删的是链接，不是目标）；最后一级是链接时 RemoveAll 也只摘链接。
 func resetScratch(root, key string, keep bool) error {
-	base := filepath.Join(root, "tmp")
+	base := filepath.Join(root, sandbox.ScratchBase)
 	if fi, err := os.Lstat(base); err == nil && !fi.IsDir() {
 		if err := os.Remove(base); err != nil {
 			return err

@@ -63,6 +63,69 @@ func ReadOnlyDirs(root string) []string {
 	}
 }
 
+// ScratchBase 分析层临时目录在仓库根下的名字，每档一个子目录（见 pipeline.ScratchDir）。
+const ScratchBase = "tmp"
+
+// WritableDirs 分析层该写的只有这两处：报告与临时目录。
+func WritableDirs(root string) []string {
+	return []string{filepath.Join(root, "reports"), filepath.Join(root, ScratchBase)}
+}
+
+// autoLoaded 仓库根下现在可能没有、但一旦被建出来就会被别的程序自动读进去的名字。
+//
+// ProtectedPaths 按仓库根现有的条目拒写，模型新建的根级文件挡不住；这几个挡不住的代价
+// 最大：CLAUDE.local.md、.claude/ 下的设置（含 hooks）与 .mcp.json 会被交互式会话在启动
+// 时读进去，而交互式会话的权限往往放得很宽；AGENTS.override.md 与 .codex/ 是 codex 的；
+// go 命令会顺着目录往上找 go.work；direnv 一进目录就执行 .envrc。
+var autoLoaded = []string{
+	".claude", "CLAUDE.local.md", ".mcp.json", "AGENTS.override.md", ".codex", "go.work", ".envrc",
+}
+
+// ProtectedPaths 仓库里分析层不得改写的一切：ReadOnlyDirs、仓库根下除 WritableDirs 以外
+// 现有的每一项、仓库内的凭据文件（还没建出来的也算）、以及 autoLoaded。
+//
+// 为什么要列这么全：claude 的沙箱默认放行工作目录（仓库根）的写入，allowWrite 只能往上
+// 加、收不回来，能收的只有 denyWrite；而 CLI 生成 seatbelt 时 deny 排在 allow 后面，拒了
+// 仓库根就连 reports/ 一起拒了，所以只能逐项拒。以前只拒 ReadOnlyDirs，config.conf、
+// state/、bin/、AGENTS.md 都写得进：config.conf 是热重读的，往里写一行 DANGER=1，下一档
+// 就脱离沙箱、可联网、凭据全开地跑；state/ 里是它自己的权限文件；bin/ 里是下次重启要
+// 执行的二进制。现列仓库根，以后新加的目录和文件自动在内。
+//
+// 列不出仓库根就报错（fail-closed）；仓库根不存在除外，那时没有东西要护。
+func ProtectedPaths(home, root string) ([]string, error) {
+	skip := map[string]bool{}
+	for _, p := range WritableDirs(root) {
+		skip[p] = true
+	}
+	seen := map[string]bool{}
+	var out []string
+	add := func(p string) {
+		if !skip[p] && !seen[p] {
+			seen[p] = true
+			out = append(out, p)
+		}
+	}
+	for _, p := range ReadOnlyDirs(root) {
+		add(p)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, e := range entries {
+		add(filepath.Join(root, e.Name()))
+	}
+	for _, p := range DenyFiles(home, root) {
+		if strings.HasPrefix(p, root+string(filepath.Separator)) {
+			add(p)
+		}
+	}
+	for _, n := range autoLoaded {
+		add(filepath.Join(root, n))
+	}
+	return out, nil
+}
+
 // LocalExtra 机器特有的敏感路径。denylist 天然会漂移——换机器、装新 CLI，
 // 上面那份清单就又落后一次。这个文件不进版本控制，一行一个路径。
 func LocalExtra(root string) []string {

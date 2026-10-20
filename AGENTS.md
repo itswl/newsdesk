@@ -215,7 +215,8 @@ Trending 那一档有早间草稿：文件在，但那是上一轮的产物，16
   用量行就丢了（10-19 两档）。现在 `message` 两种形状都收，权限拒绝单独打成
   「⚠ 工具调用被拒（Bash）：…」。无人值守没有审批面，要审批的调用一律当场拒。实测会被拒的
   有四种：Bash 里内联带引号花括号的代码（heredoc / `python3 -c` 里的字典、f-string，报
-  「brace with quote character」）、循环里的变量、`cd` 之后接相对路径、Write 写工作目录之外。
+  「brace with quote character」）、循环里的变量、`cd` 之后接相对路径、Write 写 `reports/` 与
+  临时目录之外。
   四份 prompt 写明了替代写法（脚本先 Write 进临时目录再跑，见「仓库内的凭据文件」一节末尾）。
   任务日志里只有拒绝原因，**被拒的原命令在引擎的会话记录里**：`~/.claude/projects/` 下按
   仓库路径命名的目录，一档一个 `<会话 id>.jsonl`。
@@ -323,6 +324,17 @@ profile、claude 的权限文件、`newsdesk doctor` 的实测。**以前 claude
 **按目录拒会漏掉同级的同名文件**：`~/.claude` 拒了，`~/.claude.json` 还是敞开的，
 它不在那个目录下。所以目录和单文件是两份清单，都要维护。
 
+**权限规则里的绝对路径要写 `//`。** `Read(/x)`、`Edit(/x)` 里的 `/x` 是**相对设置文件所在
+目录**的，`sandbox.filesystem` 里的路径才是普通绝对路径。两边语义不同，写错不报错，规则
+只是落空。2026-10-20 之前生成的 Read 拒绝全是单斜杠：仓库外的凭据靠
+`blockReadsOutsideWorkingDirectories` 和 seatbelt 挡着，仓库里的 `config.conf` 对 Read 工具
+是敞开的（查得到的引擎会话里没有读过它）。`sandbox.rulePath` 负责加斜杠，
+`TestRulePathsAreAbsolute` 钉着这条。
+
+**沙箱的 `denyWrite` 只管模型跑的命令。** Write/Edit 是 CLI 自己执行的，不经沙箱，只认
+`Edit(...)` 规则：同一天实测，`denyWrite` 里的 `go/`、`prompts/`，Write 照样写进。所以不许
+改写的路径两层都要拒，工具层另外是白名单，见「仓库内的凭据文件」一节末尾。
+
 denylist 天然会漂移，所以机器特有的路径写进 `sandbox-paths.local`（不进版本控制），
 加完跑一次 `newsdesk doctor` 确认真的拦住了。找法：
 
@@ -351,8 +363,21 @@ codex 整个进程跑在外层沙箱里，拒掉 `~/.codex` 就登录不了；cl
 **新增带凭据的文件时，同时改三处**：`sandbox.DenyFiles()`、发布前自检的密钥收集
 （`pipeline.secretValues`）、`.gitignore`。
 
-**模型能在 `reports/` 之外落文件。** 沙箱对仓库根整体放行写入（只拒 `prompts/ go/ ts/
-.git`），10-18 那档豆瓣就在仓库根写出了 `scripts/extract_douban_brief.py`。四份 prompt 限定
+**分析层只能写 `reports/` 与临时目录。** 以前是仓库根整体放行、只拒 `prompts/ go/ ts/ .git`，
+那等于 `config.conf`、`state/`、`bin/`、`AGENTS.md` 都写得进：`config.conf` 是热重读的，往里
+写一行 `DANGER=1`，下一档就脱离沙箱、可联网、凭据全开地跑；`state/` 里是它自己的权限文件；
+`bin/` 里是下次重启要执行的二进制；`AGENTS.md` 是交互式会话的指令。现在两层分开收：
+
+| 层 | 怎么收 |
+|---|---|
+| Write/Edit 工具 | `defaultMode: default`，`allow` 只有 `reports/**` 与 `tmp/**`，别处要审批、当场拒。**别改回 `acceptEdits`**，它对整个工作目录放行 |
+| Bash（沙箱） | CLI 默认放行工作目录的写入、收不回来，而且生成 seatbelt 时 deny 排在 allow 后面，拒了仓库根就连 `reports/` 一起拒了。所以 `sandbox.ProtectedPaths` 现列仓库根，除那两处外逐项拒，外加还没建出来的凭据文件与 `CLAUDE.local.md`、`.claude/`、`.mcp.json` 这类一建出来就会被自动读进去的名字 |
+
+剩下的缺口：Bash 仍能在仓库根**新建**不在名单里的文件（探针实测）。它们不会被任何东西执行，
+`git status` 看得见。codex 那份外层 seatbelt 用的是同一份拒写清单，但它是 `(allow default)`
+起手，仓库外照样能写——codex 现在不在用，要启用它先收这一层。
+
+10-18 那档豆瓣在仓库根写出过 `scripts/extract_douban_brief.py`。四份 prompt 限定
 报告只写 `reports/<日期>/`、辅助脚本只写临时目录 `tmp/<任务>/`。路径只在
 `pipeline.ScratchDir` 定义，prompt 里写占位 `<临时目录>` 由 `Prompt()` 代入；`/tmp/` 进了
 `.gitignore`，`Analyze` 每次尝试前清空、跑完删掉。仓库里多出未跟踪文件先看当天的任务日志。
@@ -360,7 +385,7 @@ codex 整个进程跑在外层沙箱里，拒掉 `~/.codex` 就登录不了；cl
 **别把辅助脚本再指到 `/tmp`。** 10-19 写进 prompt 的是「放 /tmp，或直接在 Bash 里内联」，
 两条都走不通：Write 写工作目录之外要审批，在 Bash 里内联带引号花括号的 Python 会被 CLI 判成
 展开混淆，无人值守时都当场拒。10-20 那档 trending 把两条路撞了一遍，花了几分钟，最后把脚本
-写在了仓库根上。仓库里是 Write 与沙箱两层都放行的地方，所以临时目录放在仓库里。
+写在了仓库根上（现在用 Write 写不进了，用 Bash 新建仍然可以，见上面的缺口）。临时目录是 Write 与沙箱两层都放行的两处之一，所以放在仓库里。
 清理是沙箱外的进程在删东西，而模型能在仓库里建符号链接：`tmp` 不是真目录就先摘掉它本身，
 不顺着链接删到仓库外去（`TestResetScratchDoesNotFollowSymlinks`）。
 

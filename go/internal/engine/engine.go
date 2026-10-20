@@ -71,7 +71,8 @@ func claudeArgs(kind Kind, cfg *config.Config, settings, prompt string, danger b
 		// env（ENABLE_TOOL_SEARCH 打开动态工具加载、agent teams 多出一批工具）、
 		// 11 个技能与已装插件——实测每次调用输入多约 65%（17,431 → 6,171 token）。
 		// ⚠️ --settings 指定的是「additional settings」，不受这条影响：下面那份
-		// 权限文件（含凭据拒读）照常生效，实测 deny 规则仍是 49 条。
+		// 权限文件（含凭据拒读）照常生效。2026-10-20 用同样的参数跑探针实测过：Read 读不到、
+		// Write 写不进被拒的路径（前提是规则写成 //绝对路径，见 sandbox.rulePath）。
 		"--setting-sources", "",
 		"--strict-mcp-config",
 		// 流式 JSON 是为了拿 token 统计（in/out/cache）。renderStream 负责把它还原

@@ -20,7 +20,11 @@ import (
 func Wrapper(home, root, engine string) ([]string, error) {
 	deny := DenyForEngine(home, root, engine)
 	files := append(DenyFiles(home, root), LocalExtra(root)...)
-	ro := ReadOnlyDirs(root)
+	// 与 claude 那份同一个来源：仓库里除 reports/ 与临时目录以外一律不许写
+	ro, err := ProtectedPaths(home, root)
+	if err != nil {
+		return nil, fmt.Errorf("列仓库根以生成拒写清单: %w", err)
+	}
 	// 清单为空必须拒绝：下面会生成一份 (literal "") 什么都不拦的 profile，
 	// 那比没有沙箱更糟，因为它看起来有。
 	if len(deny) == 0 || len(ro) == 0 {

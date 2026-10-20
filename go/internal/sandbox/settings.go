@@ -2,9 +2,20 @@ package sandbox
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 )
+
+// rulePath 把绝对路径写成权限规则认的绝对路径。
+//
+// ⚠️ 权限规则 Read(...) / Edit(...) 里的路径按 gitignore 的规矩解释：`/x` 是**相对设置文件
+// 所在目录**的，绝对路径要写 `//x`。sandbox.filesystem 里的路径则是普通绝对路径。两边语义
+// 不同，写错既不报错也不告警，规则只是什么都匹配不上。2026-10-20 用同一份设置实测：
+// Read(/abs/a.txt) 照样读到、Read(//abs/b.txt) 被拒，Edit 同理。在那之前这里生成的 Read
+// 拒绝全部落空：仓库外靠 blockReadsOutsideWorkingDirectories 和 seatbelt 挡着，仓库里的
+// config.conf 对 Read 工具是敞开的。
+func rulePath(p string) string { return "/" + filepath.Clean(p) }
 
 // Settings 是传给 claude 的权限文件。
 //
@@ -26,12 +37,28 @@ func Settings(home, root string, danger bool) ([]byte, error) {
 	readRules := make([]string, 0, len(denyRead))
 	for _, p := range denyRead {
 		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-			readRules = append(readRules, "Read("+p+"/**)")
+			readRules = append(readRules, "Read("+rulePath(p)+"/**)")
 		} else {
-			readRules = append(readRules, "Read("+p+")")
+			readRules = append(readRules, "Read("+rulePath(p)+")")
 		}
 	}
-	deny := append(readRules,
+	protected, err := ProtectedPaths(home, root)
+	if err != nil {
+		return nil, fmt.Errorf("列仓库根以生成拒写清单: %w", err)
+	}
+	// Write/Edit 是 CLI 自己执行的，不经沙箱，sandbox.filesystem 管不到它们，只认 Edit(...)
+	// 规则（2026-10-20 实测：denyWrite 里的 go/、prompts/，Write 照样写进）。default 模式下
+	// 只有 allow 里的路径免审批，别处的编辑都要审批、无人值守当场拒；protected 再显式拒
+	// 一遍，哪天有人把 allow 放宽了，这些地方照样写不进。
+	var allow []string
+	for _, p := range WritableDirs(root) {
+		allow = append(allow, "Edit("+rulePath(p)+"/**)")
+	}
+	deny := readRules
+	for _, p := range protected {
+		deny = append(deny, "Edit("+rulePath(p)+")", "Edit("+rulePath(p)+"/**)")
+	}
+	deny = append(deny,
 		"Bash(git push:*)", "Bash(gh repo:*)", "Bash(gh auth:*)", "Bash(gh secret:*)",
 		"Bash(oci:*)", "Bash(ssh:*)", "Bash(scp:*)", "Bash(security:*)",
 		"Bash(sudo:*)", "Bash(launchctl:*)", "Bash(crontab:*)")
@@ -41,7 +68,9 @@ func Settings(home, root string, danger bool) ([]byte, error) {
 		"_generated": "由 internal/sandbox 生成，勿手改；" +
 			"拒读路径与 seatbelt profile 同源，见 internal/sandbox/paths.go",
 		"permissions": map[string]any{
-			"defaultMode":                         "acceptEdits",
+			// 不用 acceptEdits：它对工作目录里的编辑一律放行，而工作目录是整个仓库。
+			"defaultMode":                         "default",
+			"allow":                               allow,
 			"blockReadsOutsideWorkingDirectories": true,
 			"disableBypassPermissionsMode":        "disable",
 			"deny":                                deny,
@@ -61,8 +90,9 @@ func Settings(home, root string, danger bool) ([]byte, error) {
 			},
 			"filesystem": map[string]any{
 				"denyRead":   denyRead,
-				"allowWrite": []string{root},
-				"denyWrite":  ReadOnlyDirs(root),
+				"allowWrite": WritableDirs(root),
+				// 真正收口的是这一项，见 ProtectedPaths
+				"denyWrite": protected,
 			},
 		},
 		"disableAllHooks":        true,
