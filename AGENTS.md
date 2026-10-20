@@ -213,7 +213,12 @@ Trending 那一档有早间草稿：文件在，但那是上一轮的产物，16
   值守时变：2.1.303 起 `system/permission_denied` 事件的 `message` 是字符串而不是对象，
   以前用 `json.Decoder` 串着解，一碰到就把剩下的整段倾进日志、`result` 事件错过，
   用量行就丢了（10-19 两档）。现在 `message` 两种形状都收，权限拒绝单独打成
-  「⚠ 工具调用被拒（Bash）：…」——无人值守没有审批面，带变量的 Bash 命令会被自动拒。
+  「⚠ 工具调用被拒（Bash）：…」。无人值守没有审批面，要审批的调用一律当场拒。实测会被拒的
+  有四种：Bash 里内联带引号花括号的代码（heredoc / `python3 -c` 里的字典、f-string，报
+  「brace with quote character」）、循环里的变量、`cd` 之后接相对路径、Write 写工作目录之外。
+  四份 prompt 写明了替代写法（脚本先 Write 进临时目录再跑，见「仓库内的凭据文件」一节末尾）。
+  任务日志里只有拒绝原因，**被拒的原命令在引擎的会话记录里**：`~/.claude/projects/` 下按
+  仓库路径命名的目录，一档一个 `<会话 id>.jsonl`。
 
 - **`rate_limit_event` 打成一行配额**：「⏱ 配额：5 小时窗 78%（14:00 重置）· 本周 13%
   （10-26 09:00 重置）」。每次 API 往返都来一条、利用率逐次爬 1%，所以首条照打，之后只在
@@ -347,8 +352,17 @@ codex 整个进程跑在外层沙箱里，拒掉 `~/.codex` 就登录不了；cl
 （`pipeline.secretValues`）、`.gitignore`。
 
 **模型能在 `reports/` 之外落文件。** 沙箱对仓库根整体放行写入（只拒 `prompts/ go/ ts/
-.git`），10-18 那档豆瓣就在仓库根写出了 `scripts/extract_douban_brief.py`。四份 prompt 都
-限定只写 `reports/<日期>/`，辅助脚本放 /tmp；仓库里多出未跟踪文件先看当天的任务日志。
+.git`），10-18 那档豆瓣就在仓库根写出了 `scripts/extract_douban_brief.py`。四份 prompt 限定
+报告只写 `reports/<日期>/`、辅助脚本只写临时目录 `tmp/<任务>/`。路径只在
+`pipeline.ScratchDir` 定义，prompt 里写占位 `<临时目录>` 由 `Prompt()` 代入；`/tmp/` 进了
+`.gitignore`，`Analyze` 每次尝试前清空、跑完删掉。仓库里多出未跟踪文件先看当天的任务日志。
+
+**别把辅助脚本再指到 `/tmp`。** 10-19 写进 prompt 的是「放 /tmp，或直接在 Bash 里内联」，
+两条都走不通：Write 写工作目录之外要审批，在 Bash 里内联带引号花括号的 Python 会被 CLI 判成
+展开混淆，无人值守时都当场拒。10-20 那档 trending 把两条路撞了一遍，花了几分钟，最后把脚本
+写在了仓库根上。仓库里是 Write 与沙箱两层都放行的地方，所以临时目录放在仓库里。
+清理是沙箱外的进程在删东西，而模型能在仓库里建符号链接：`tmp` 不是真目录就先摘掉它本身，
+不顺着链接删到仓库外去（`TestResetScratchDoesNotFollowSymlinks`）。
 
 ## 发布前扫凭据
 

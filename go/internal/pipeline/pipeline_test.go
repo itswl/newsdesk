@@ -140,3 +140,98 @@ func TestSecretValuesTreatsVAPIDKeysByName(t *testing.T) {
 		t.Error("公钥印在每个页面上，被当成凭据会让每次发布都中止")
 	}
 }
+
+// 临时目录的路径只在 ScratchDir 定义一次，prompt 里写占位，由执行器代入。
+func TestPromptSubstitutesScratchDir(t *testing.T) {
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "prompts"), 0o755)
+	os.WriteFile(filepath.Join(root, "prompts", "trending.md"),
+		[]byte("脚本写进 <临时目录>/，报告写进 reports/<今天日期>/"), 0o644)
+	got, err := Prompt(root, "trending", "2026-10-20")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "<临时目录>") || !strings.Contains(got, "脚本写进 tmp/trending/") {
+		t.Fatalf("临时目录没代入：%s", got)
+	}
+}
+
+// 仓库里真实的四份 prompt 都要把辅助脚本指到临时目录。
+//
+// 指错了不会报错：Write 写工作目录之外要审批，无人值守当场拒；在 Bash 里内联带
+// 引号花括号的代码也拒。2026-10-20 那档 trending 两条路都撞过，最后把脚本写在了
+// 仓库根上。占位没写的话，执行器建好、清好的目录模型根本不知道。
+func TestRealPromptsUseScratchDir(t *testing.T) {
+	root := filepath.Join("..", "..", "..")
+	for _, key := range []string{"ai", "douban", "trending", "momoyu"} {
+		got, err := Prompt(root, key, "2026-10-20")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(got, ScratchDir(key)+"/") {
+			t.Errorf("%s 的 prompt 没把辅助脚本指到 %s/（写占位 <临时目录>）", key, ScratchDir(key))
+		}
+	}
+}
+
+func TestResetScratchStartsEmpty(t *testing.T) {
+	root := t.TempDir()
+	old := filepath.Join(root, "tmp", "trending", "calc.py")
+	os.MkdirAll(filepath.Dir(old), 0o755)
+	os.WriteFile(old, []byte("print(1)"), 0o644)
+
+	if err := resetScratch(root, "trending", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(old); !os.IsNotExist(err) {
+		t.Fatal("上一轮留下的脚本应被清掉")
+	}
+	if fi, err := os.Stat(filepath.Join(root, "tmp", "trending")); err != nil || !fi.IsDir() {
+		t.Fatalf("开跑前应建好空目录：%v", err)
+	}
+	if err := resetScratch(root, "trending", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "tmp", "trending")); !os.IsNotExist(err) {
+		t.Fatalf("收尾后目录应不存在：%v", err)
+	}
+}
+
+// 清理是沙箱外的进程在删东西，而分析层能在仓库里建符号链接。tmp 或 tmp/<任务>
+// 被换成指向仓库外的链接时，只能摘掉链接本身，不能顺着删到目标里去。
+func TestResetScratchDoesNotFollowSymlinks(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	keep := filepath.Join(outside, "douban", "keep.txt")
+	os.MkdirAll(filepath.Dir(keep), 0o755)
+	os.WriteFile(keep, []byte("x"), 0o644)
+
+	// tmp 本身是链接：tmp/douban 实际指向 outside/douban
+	if err := os.Symlink(outside, filepath.Join(root, "tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetScratch(root, "douban", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("顺着 tmp 链接删到仓库外去了：%v", err)
+	}
+	if fi, err := os.Lstat(filepath.Join(root, "tmp")); err != nil || !fi.IsDir() {
+		t.Fatalf("tmp 应换成真目录：%v", err)
+	}
+
+	// 最后一级是链接
+	link := filepath.Join(root, "tmp", "douban")
+	os.RemoveAll(link)
+	if err := os.Symlink(filepath.Join(outside, "douban"), link); err != nil {
+		t.Fatal(err)
+	}
+	if err := resetScratch(root, "douban", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(keep); err != nil {
+		t.Fatalf("顺着 tmp/douban 链接删到仓库外去了：%v", err)
+	}
+	if _, err := os.Lstat(link); !os.IsNotExist(err) {
+		t.Fatalf("链接本身应被摘掉：%v", err)
+	}
+}

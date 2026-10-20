@@ -54,7 +54,42 @@ func Prompt(root, key, date string) (string, error) {
 	for _, ph := range []string{"<今天>", "<今天日期>", "{{DATE}}", "<DATE>"} {
 		body = strings.ReplaceAll(body, ph, date)
 	}
+	// 临时目录同理由执行器代入：路径只在 ScratchDir 定义一次，prompt 里写死的话
+	// 改了这边、prompt 还指着旧地方，模型写进去的东西就没人清。
+	body = strings.ReplaceAll(body, "<临时目录>", ScratchDir(key))
 	return body, nil
+}
+
+// ScratchDir 是这一档给模型放辅助脚本与中间文件的目录（相对仓库根）。
+//
+// 为什么在仓库里：无人值守没有审批面，要审批的调用当场被拒。claude 的 Write 写工作
+// 目录之外要审批；在 Bash 里用 heredoc / python3 -c 内联带引号花括号的代码（字典、
+// f-string）会被 CLI 的命令解析器判成「展开混淆」，也要审批。2026-10-19 写进 prompt
+// 的「放 /tmp，或直接在 Bash 里内联」两条路，10-20 那档 trending 都撞了一遍，最后
+// 把脚本写在了仓库根上。仓库里是两层都放行的地方：Write 在工作目录内自动通过，沙箱
+// 对仓库根放行写入。
+func ScratchDir(key string) string { return "tmp/" + key }
+
+// resetScratch 清空 <root>/tmp/<key>；keep 为真时再建一个空的（开跑前），为假时只删（收尾）。
+//
+// tmp 本身必须是真目录。分析层能在仓库里建符号链接，而删东西的是沙箱外的这个进程：
+// 跟着一条指向仓库外的 tmp 链接去删 tmp/<key>，删掉的就是仓库外的目录。所以 tmp 不是
+// 目录就先删它本身（删的是链接，不是目标）；最后一级是链接时 RemoveAll 也只摘链接。
+func resetScratch(root, key string, keep bool) error {
+	base := filepath.Join(root, "tmp")
+	if fi, err := os.Lstat(base); err == nil && !fi.IsDir() {
+		if err := os.Remove(base); err != nil {
+			return err
+		}
+	}
+	dir := filepath.Join(base, key)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	if !keep {
+		return nil
+	}
+	return os.MkdirAll(dir, 0o755)
 }
 
 type AnalyzeResult struct {
@@ -92,11 +127,22 @@ func Analyze(ctx context.Context, t task.Task, date string, cfg *config.Config,
 	}
 
 	var res AnalyzeResult
+	// 不进版本控制的目录里落了什么，git status 看不见，不删就一直堆着。
+	defer func() {
+		if err := resetScratch(root, t.Key, false); err != nil {
+			fmt.Fprintf(out, "  !! 清理临时目录 %s 失败：%v\n", ScratchDir(t.Key), err)
+		}
+	}()
 	for _, kind := range []engine.Kind{primary, fallback} {
 		if kind == "" {
 			continue
 		}
 		res.Engine, res.Attempts = kind, res.Attempts+1
+		// 每次尝试都从空目录开始：兜底不该接着用主引擎留下的半截脚本。
+		// 建不出来不拦着跑——Write 会自己建上级目录，只是少了「开跑前是空的」这一条。
+		if err := resetScratch(root, t.Key, true); err != nil {
+			fmt.Fprintf(out, "  !! 准备临时目录 %s 失败：%v\n", ScratchDir(t.Key), err)
+		}
 		// 报告是哪个引擎、哪个模型写的，必须留在这一档自己的日志里。
 		// 切了兜底而日志只有一句「完成」的话，风格突变就只能靠猜。
 		fmt.Fprintf(out, "  引擎: %s\n", engine.Describe(cfg, kind))
