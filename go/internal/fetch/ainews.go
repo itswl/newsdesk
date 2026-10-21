@@ -201,9 +201,13 @@ func keepFresh(items []Item, cutoff time.Time, _ int) []Item {
 }
 
 var (
-	reTag      = regexp.MustCompile(`<[^>]+>`)
-	reWS       = regexp.MustCompile(`\s+`)
-	reAnchor   = regexp.MustCompile(`(?s)<a\s+href="(/news/[a-z0-9\-]+)"[^>]*>(.*?)</a>`)
+	reTag = regexp.MustCompile(`<[^>]+>`)
+	reWS  = regexp.MustCompile(`\s+`)
+	// 站内链接，不管属性顺序：2026-10-21 改版后 class 排在了 href 前面。不收 // 开头的
+	// 协议相对地址，那是别的域名。
+	reAnchor   = regexp.MustCompile(`(?s)<a\b[^>]*?\shref="(/[^/"#?][^"#?]*)"[^>]*>(.*?)</a>`)
+	reArticle  = regexp.MustCompile(`(?s)<article\b[^>]*>(.*?)</article>`)
+	reListItem = regexp.MustCompile(`(?s)<li\b[^>]*>(.*?)</li>`)
 	reTime     = regexp.MustCompile(`<time[^>]*>([^<]+)</time>`)
 	reTitleCls = regexp.MustCompile(`(?s)<[a-z0-9]+[^>]*class="[^"]*title[^"]*"[^>]*>(.*?)</[a-z0-9]+>`)
 	reHeading  = regexp.MustCompile(`(?s)<h[1-6][^>]*>(.*?)</h[1-6]>`)
@@ -215,34 +219,130 @@ func plain(s string) string {
 }
 
 // anthropicNews Anthropic 官网没有 RSS（/rss.xml、/feed.xml 都 404），只能解析页面。
-//
-// 页面有两套布局：FeaturedGrid 用 <h4>，PublicationList 用 <span>。共同点是
-// class 里带 title——按 class 匹配比按标签稳，因为 class 名带的构建哈希会随改版变。
-//
-// 解析出 0 条当作失败上报，不要静默返回空：否则改版后这个源会无声消失，
-// 而它混在 15 个源里没人会注意到少了一个。
 func anthropicNews(ctx context.Context, c *Client) ([]Item, error) {
 	body, err := c.Get(ctx, "https://www.anthropic.com/news", nil)
 	if err != nil {
 		return nil, err
 	}
+	return parseAnthropicNews(string(body))
+}
+
+// parseAnthropicNews 解析新闻列表页，按卡片切。
+//
+// 2026-10-21 改版后页面有两块：上面的精选卡片各是一个 <article>，日期在卡片头部、排在
+// 链接前面；下面的表格每行一个 <li>，日期在同一行的日期单元格里、排在链接后面。日期都
+// 不在链接里面了，旧解析器又只认 href 打头的 <a>，那天一条都没解析出来。另外新模型发布
+// 那几张卡片的链接直接指向产品页、不在 /news/ 下面，只按 /news/ 找的话，最要紧的那几条
+// 本来就会漏。
+//
+// 卡片里第一个带标题的站内链接就是这一条，第一个 <time> 是它的日期，指向同一地址的链接
+// 里的段落是摘要（精选卡片头部也有段落，那是栏目名，不能拿）。没有日期的卡片跳过：导航、
+// 页脚里的列表项也是 <li>。卡片切不出来再退回按链接找，改版前标题、日期、摘要都在同一个
+// <a> 里面。
+//
+// 解析出 0 条、或者一条都没有日期，都当失败上报，不能静默返回：0 条的话这个源会无声地
+// 消失，它混在 15 个源里没人会注意到少了一个；没有日期的条目 keepFresh 一律保留，页面上
+// 二十几条旧闻就会天天被当成窗内新闻交给模型。
+func parseAnthropicNews(body string) ([]Item, error) {
+	out := anthropicCards(body)
+	if len(out) == 0 {
+		out = anthropicAnchors(body)
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("解析出 0 条，页面结构可能已变")
+	}
+	for _, it := range out {
+		if it.Date != "" {
+			return out, nil
+		}
+	}
+	return nil, fmt.Errorf("解析出 %d 条但没有一条带日期，页面结构可能已变", len(out))
+}
+
+func anthropicItem(href, title string) Item {
+	return Item{Source: "Anthropic", Tier: "一手·厂商公告", Title: title, Link: "https://www.anthropic.com" + href}
+}
+
+// titleOf 链接里的标题：class 带 title 字样的元素，或者 h1–h6。没有就不是一条新闻的链接
+// （栏目名、导航、页脚都是这种）。
+func titleOf(inner string) string {
+	h := reTitleCls.FindStringSubmatch(inner)
+	if h == nil {
+		h = reHeading.FindStringSubmatch(inner)
+	}
+	if h == nil {
+		return ""
+	}
+	return plain(h[1])
+}
+
+func anthropicCards(body string) []Item {
+	type card struct {
+		at   int
+		html string
+	}
+	var cards []card
+	// RE2 没有反向引用，两种卡片分开切，再按在页面上的位置排回去
+	for _, re := range []*regexp.Regexp{reArticle, reListItem} {
+		for _, m := range re.FindAllStringSubmatchIndex(body, -1) {
+			cards = append(cards, card{m[0], body[m[2]:m[3]]})
+		}
+	}
+	sort.Slice(cards, func(i, j int) bool { return cards[i].at < cards[j].at })
+
 	seen := map[string]bool{}
 	var out []Item
-	for _, m := range reAnchor.FindAllStringSubmatch(string(body), -1) {
+	for _, cd := range cards {
+		t := reTime.FindStringSubmatch(cd.html)
+		if t == nil {
+			continue
+		}
+		anchors := reAnchor.FindAllStringSubmatch(cd.html, -1)
+		for _, a := range anchors {
+			title := titleOf(a[2])
+			if title == "" {
+				continue
+			}
+			it := anthropicItem(a[1], title)
+			if seen[it.Link] { // 精选卡片与表格会列同一条
+				break
+			}
+			seen[it.Link] = true
+			it.Date = strings.TrimSpace(t[1])
+			for _, b := range anchors {
+				if b[1] != a[1] {
+					continue
+				}
+				if p := rePara.FindStringSubmatch(b[2]); p != nil && plain(p[1]) != "" {
+					it.Summary = truncate(plain(p[1]), 400)
+					break
+				}
+			}
+			out = append(out, it)
+			break
+		}
+	}
+	return out
+}
+
+// anthropicAnchors 改版前的布局：标题、日期、摘要都在同一个 /news/ 链接里面。
+func anthropicAnchors(body string) []Item {
+	seen := map[string]bool{}
+	var out []Item
+	for _, m := range reAnchor.FindAllStringSubmatch(body, -1) {
 		href, inner := m[1], m[2]
-		h := reTitleCls.FindStringSubmatch(inner)
-		if h == nil {
-			h = reHeading.FindStringSubmatch(inner)
-		}
-		if h == nil {
+		if !strings.HasPrefix(href, "/news/") {
 			continue
 		}
-		link := "https://www.anthropic.com" + href
-		if seen[link] { // 同一条目在页面上可能出现多次
+		title := titleOf(inner)
+		if title == "" {
 			continue
 		}
-		seen[link] = true
-		it := Item{Source: "Anthropic", Tier: "一手·厂商公告", Title: plain(h[1]), Link: link}
+		it := anthropicItem(href, title)
+		if seen[it.Link] { // 同一条目在页面上可能出现多次
+			continue
+		}
+		seen[it.Link] = true
 		if t := reTime.FindStringSubmatch(inner); t != nil {
 			it.Date = strings.TrimSpace(t[1])
 		}
@@ -251,10 +351,7 @@ func anthropicNews(ctx context.Context, c *Client) ([]Item, error) {
 		}
 		out = append(out, it)
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("解析出 0 条，页面结构可能已变")
-	}
-	return out, nil
+	return out
 }
 
 // qwenModels Qwen 的公告源。
