@@ -85,8 +85,8 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error 
 				ts = t.Format("01-02 15:04")
 				lag = now.Sub(t).Hours()
 			}
-			// 滞后源必须标出来：掘金经常滞后 24 小时以上，
-			// 报告把它当今天的会直接失真
+			// 更新时刻旧于 6 小时的源列出来。这只是接口给的时刻：掘金的会卡在几天前、
+			// 内容照常在换，源新不新以跨期比对的 freshness（比上一期新进几条）为准
 			if lag > 6 {
 				stale = append(stale, staleSrc{s.Name, ts, lag})
 			}
@@ -119,14 +119,21 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error 
 	return nil
 }
 
+// beijing 是摸摸鱼站点展示用的时区。固定偏移就够：没有夏令时，也不依赖本机的时区库。
+var beijing = time.FixedZone("CST", 8*3600)
+
 // parseMomoyuTime 接口给的是 UTC，站点按北京时间展示。
+//
+// 返回真实时刻、挂北京时区：Format 出来是北京时间，拿它算的滞后也是真的。
+// ⚠️ 以前是把时刻往后挪 8 小时再当 UTC 用，显示碰巧对，滞后却少算 8 小时，
+// 滞后 6–14 小时的源因此从不报（TestParseMomoyuTimeKeepsTheRealInstant）。
 func parseMomoyuTime(s string) (time.Time, bool) {
 	if s == "" {
 		return time.Time{}, false
 	}
 	for _, layout := range []string{time.RFC3339, "2006-01-02T15:04:05Z", "2006-01-02 15:04:05"} {
 		if t, err := time.Parse(layout, s); err == nil {
-			return t.Add(8 * time.Hour).UTC(), true
+			return t.In(beijing), true
 		}
 	}
 	return time.Time{}, false

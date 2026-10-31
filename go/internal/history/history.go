@@ -118,5 +118,10 @@ func Build(st *store.Store, src, date string, w io.Writer) error {
 		"douban": "history_days", "trending": "history_boards"}[src]
 	fmt.Fprintf(w, "跨期比对 -> %s/history.json（回看 %d 天，%s=%v）\n",
 		st.RelTo(dd), Window, key, out[key])
+	if f, ok := out["freshness"].(map[string]any); ok {
+		if u, _ := f["unchanged"].([]string); len(u) > 0 {
+			fmt.Fprintf(w, "⚠ 内容与上一期（%s）完全相同: %s\n", f["prev_day"], strings.Join(u, "、"))
+		}
+	}
 	return nil
 }

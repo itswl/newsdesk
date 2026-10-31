@@ -115,9 +115,13 @@ func momoyu(st *store.Store, date, dd string) (map[string]any, error) {
 		m   map[string]mItem
 	}
 	var hist []snap
+	var prevDay string
+	var prevRaw momoyuRaw
 	for _, d := range daysBefore(st, "momoyu", date, Window) {
 		var past momoyuRaw
-		loadJSON(filepath.Join(d[1], "raw.json"), &past)
+		if loadJSON(filepath.Join(d[1], "raw.json"), &past) && prevDay == "" && len(past.Data) > 0 {
+			prevDay, prevRaw = d[0], past
+		}
 		hist = append(hist, snap{d[0], momoyuTitles(past)})
 	}
 
@@ -160,11 +164,70 @@ func momoyu(st *store.Store, date, dd string) (map[string]any, error) {
 			return dropped[i]["title"].(string) < dropped[j]["title"].(string)
 		})
 	}
-	return map[string]any{
+	out := map[string]any{
 		"history_days": len(hist), "persistent": cut(persist, Cap),
 		"persistent_total": len(persist), "new_today_count": fresh,
 		"dropped_from_prev": cut(dropped, Cap),
-	}, nil
+	}
+	if prevDay != "" {
+		out["freshness"] = momoyuFreshness(cur, prevRaw, prevDay)
+	}
+	return out, nil
+}
+
+// momoyuFreshness 各源比上一期新进几条，一条都没有的进 unchanged。
+//
+// 源新不新要按内容判断。接口给的更新时刻靠不住：掘金的 create_time 2026-10-24、25、27
+// 三天卡在 10-22，内容照常在换（每天 5–8 条新进）。榜首挂了几天也说明不了什么：掘金热榜
+// 榜首从 10-22 起连挂 10 天，同期每天 4–12 条新进。以前 prompt 教模型「条目挂上 7、8 天
+// 说明源本身没动」，报告就天天把掘金整源标成过期，新进的条目一起丢了。
+//
+// 按全部条目算，不只前 15 条：排第 16 的挤进前 15 不算新进。
+func momoyuFreshness(cur, prev momoyuRaw, prevDay string) map[string]any {
+	before := momoyuSourceTitles(prev)
+	sources := []map[string]any{}
+	unchanged := []string{}
+	for _, c := range cur.Data {
+		for _, s := range c.Data {
+			now := map[string]bool{}
+			for _, it := range s.Data {
+				now[NormTitle(it.Title)] = true
+			}
+			// new 为 nil：上一期没有这个源，无从比较
+			rec := map[string]any{"src": s.Name, "total": len(now), "new": nil}
+			if p, ok := before[s.Name]; ok {
+				n := 0
+				for t := range now {
+					if !p[t] {
+						n++
+					}
+				}
+				rec["new"] = n
+				if n == 0 && len(now) > 0 {
+					unchanged = append(unchanged, s.Name)
+				}
+			}
+			sources = append(sources, rec)
+		}
+	}
+	return map[string]any{"prev_day": prevDay, "sources": sources, "unchanged": unchanged}
+}
+
+func momoyuSourceTitles(raw momoyuRaw) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, c := range raw.Data {
+		for _, s := range c.Data {
+			m := out[s.Name]
+			if m == nil {
+				m = map[string]bool{}
+				out[s.Name] = m
+			}
+			for _, it := range s.Data {
+				m[NormTitle(it.Title)] = true
+			}
+		}
+	}
+	return out
 }
 
 type doubanSub struct{ ID, Title string }

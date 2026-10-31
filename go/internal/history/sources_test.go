@@ -2,6 +2,7 @@ package history
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -120,5 +121,73 @@ func TestTrendingBoardsSeenCountsEveryBoard(t *testing.T) {
 	}
 	if got := back["returning"]; got != false {
 		t.Errorf("returning = %v，想要 false（窗内从没上过榜，不是回锅）", got)
+	}
+}
+
+// 源新不新按「比上一期新进几条」算：榜首连挂不算源没动，换了顺序也不算新进，
+// 只有一条新进都没有才进 unchanged。按全部条目算，排第 16 的挤进前 15 不算新进。
+func TestMomoyuFreshnessCountsNewEntriesPerSource(t *testing.T) {
+	root := t.TempDir()
+	st := store.New(root)
+	type item struct {
+		Title string `json:"title"`
+	}
+	type source struct {
+		Name string `json:"name"`
+		Data []item `json:"data"`
+	}
+	src := func(name string, titles ...string) source {
+		s := source{Name: name}
+		for _, x := range titles {
+			s.Data = append(s.Data, item{x})
+		}
+		return s
+	}
+	write := func(day string, srcs ...source) {
+		raw, err := json.Marshal(map[string]any{"data": []any{map[string]any{"name": "综合", "data": srcs}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := filepath.Join(root, "data", "momoyu", day)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "raw.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var long []string
+	for i := 1; i <= 16; i++ {
+		long = append(long, fmt.Sprintf("话题%d", i))
+	}
+
+	// 更早的一期不该拿来比
+	write("2026-10-29", src("掘金", "A"), src("豆瓣热话", "X"))
+	write("2026-10-30", src("掘金", "A", "B", "C"), src("豆瓣热话", "X", "Y"), src("知乎", long...))
+	// 掘金榜首 A 还挂着、进了一条 D；豆瓣只换了顺序；知乎第 16 条挤到第一、进了一条新的；
+	// 另有一个上一期没有的源
+	today := append([]string{"话题16"}, long[:14]...)
+	write("2026-10-31", src("掘金", "A", "B", "D"), src("豆瓣热话", "Y", "X"),
+		src("知乎", append(today, "新话题")...), src("新源", "Z"))
+
+	out, err := momoyu(st, "2026-10-31", filepath.Join(root, "data", "momoyu", "2026-10-31"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, _ := out["freshness"].(map[string]any)
+	if f["prev_day"] != "2026-10-30" {
+		t.Errorf("prev_day = %v，应为最近的一期 2026-10-30", f["prev_day"])
+	}
+	want := []map[string]any{
+		{"src": "掘金", "total": 3, "new": 1},
+		{"src": "豆瓣热话", "total": 2, "new": 0},
+		{"src": "知乎", "total": 16, "new": 1},
+		{"src": "新源", "total": 1, "new": nil},
+	}
+	if got := f["sources"]; !reflect.DeepEqual(got, want) {
+		t.Errorf("sources = %v\n想要 %v", got, want)
+	}
+	if got := f["unchanged"]; !reflect.DeepEqual(got, []string{"豆瓣热话"}) {
+		t.Errorf("unchanged = %v，想要 [豆瓣热话]", got)
 	}
 }
