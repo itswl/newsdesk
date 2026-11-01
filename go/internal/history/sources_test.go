@@ -125,7 +125,7 @@ func TestTrendingBoardsSeenCountsEveryBoard(t *testing.T) {
 }
 
 // 源新不新按「比上一期新进几条」算：榜首连挂不算源没动，换了顺序也不算新进，
-// 只有一条新进都没有才进 unchanged。按全部条目算，排第 16 的挤进前 15 不算新进。
+// 只有一条新进都没有才进 no_new。按全部条目算，排第 16 的挤进前 15 不算新进。
 func TestMomoyuFreshnessCountsNewEntriesPerSource(t *testing.T) {
 	root := t.TempDir()
 	st := store.New(root)
@@ -187,7 +187,7 @@ func TestMomoyuFreshnessCountsNewEntriesPerSource(t *testing.T) {
 	if got := f["sources"]; !reflect.DeepEqual(got, want) {
 		t.Errorf("sources = %v\n想要 %v", got, want)
 	}
-	if got := f["unchanged"]; !reflect.DeepEqual(got, []string{"豆瓣热话"}) {
-		t.Errorf("unchanged = %v，想要 [豆瓣热话]", got)
+	if got := f["no_new"]; !reflect.DeepEqual(got, []string{"豆瓣热话"}) {
+		t.Errorf("no_new = %v，想要 [豆瓣热话]", got)
 	}
 }

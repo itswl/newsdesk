@@ -27,3 +27,27 @@ func TestParseMomoyuTimeKeepsTheRealInstant(t *testing.T) {
 		t.Errorf("不带时区的 %v 应与带 Z 的 %v 是同一时刻", bare, got)
 	}
 }
+
+// parsed.txt 的表头直接带上距采集多久，模型照抄、不自己算。
+// 2026-11-01 那档模型把「10-31 00:01」当成当天，豆瓣热话的 45.7 小时写成了 21.5 小时。
+func TestMomoyuHeaderCarriesTheLag(t *testing.T) {
+	run := time.Date(2026, 11, 1, 21, 45, 0, 0, beijing)
+	cases := []struct {
+		name, created string
+		n             int
+		want          string
+	}{
+		{"豆瓣热话", "2026-10-30T16:01:20.000Z", 40, "### [豆瓣热话] 更新:10-31 00:01（距采集 45.7 小时）(共40条)"},
+		{"知乎热榜", "2026-11-01T13:30:00.000Z", 30, "### [知乎热榜] 更新:11-01 21:30（距采集 15 分钟）(共30条)"},
+		// 接口的钟比本机快一点
+		{"微博热搜", "2026-11-01T13:46:00.000Z", 50, "### [微博热搜] 更新:11-01 21:46（距采集 0 分钟）(共50条)"},
+		// 解析不了就原样写，不写滞后
+		{"某源", "不是时间", 3, "### [某源] 更新:不是时间 (共3条)"},
+	}
+	for _, c := range cases {
+		ts, lag := momoyuStamp(c.created, run)
+		if got := momoyuHeader(c.name, ts, lag, c.n); got != c.want {
+			t.Errorf("表头\n  %s\n想要\n  %s", got, c.want)
+		}
+	}
+}

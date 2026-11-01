@@ -175,18 +175,21 @@ func momoyu(st *store.Store, date, dd string) (map[string]any, error) {
 	return out, nil
 }
 
-// momoyuFreshness 各源比上一期新进几条，一条都没有的进 unchanged。
+// momoyuFreshness 各源比上一期新进几条，一条都没有的进 no_new。
 //
 // 源新不新要按内容判断。接口给的更新时刻靠不住：掘金的 create_time 2026-10-24、25、27
 // 三天卡在 10-22，内容照常在换（每天 5–8 条新进）。榜首挂了几天也说明不了什么：掘金热榜
 // 榜首从 10-22 起连挂 10 天，同期每天 4–12 条新进。以前 prompt 教模型「条目挂上 7、8 天
 // 说明源本身没动」，报告就天天把掘金整源标成过期，新进的条目一起丢了。
 //
+// no_new 只说明条目没变，不等于内容相同：2026-11-01 豆瓣热话条目和顺序原样，40 条里 17 条
+// 热度值在变。这里起初叫 unchanged，报告照字面写成「完全相同」，又引用同一个源的热度变化。
+//
 // 按全部条目算，不只前 15 条：排第 16 的挤进前 15 不算新进。
 func momoyuFreshness(cur, prev momoyuRaw, prevDay string) map[string]any {
 	before := momoyuSourceTitles(prev)
 	sources := []map[string]any{}
-	unchanged := []string{}
+	noNew := []string{}
 	for _, c := range cur.Data {
 		for _, s := range c.Data {
 			now := map[string]bool{}
@@ -204,13 +207,13 @@ func momoyuFreshness(cur, prev momoyuRaw, prevDay string) map[string]any {
 				}
 				rec["new"] = n
 				if n == 0 && len(now) > 0 {
-					unchanged = append(unchanged, s.Name)
+					noNew = append(noNew, s.Name)
 				}
 			}
 			sources = append(sources, rec)
 		}
 	}
-	return map[string]any{"prev_day": prevDay, "sources": sources, "unchanged": unchanged}
+	return map[string]any{"prev_day": prevDay, "sources": sources, "no_new": noNew}
 }
 
 func momoyuSourceTitles(raw momoyuRaw) map[string]map[string]bool {

@@ -79,18 +79,13 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error 
 	for _, cat := range resp.Data {
 		lines = append(lines, strings.Repeat("=", 70), "## 分类: "+cat.Name, "")
 		for _, s := range cat.Data {
-			ts := s.CreateTime
-			lag := -1.0
-			if t, ok := parseMomoyuTime(s.CreateTime); ok {
-				ts = t.Format("01-02 15:04")
-				lag = now.Sub(t).Hours()
-			}
+			ts, lag := momoyuStamp(s.CreateTime, now)
 			// 更新时刻旧于 6 小时的源列出来。这只是接口给的时刻：掘金的会卡在几天前、
 			// 内容照常在换，源新不新以跨期比对的 freshness（比上一期新进几条）为准
 			if lag > 6 {
 				stale = append(stale, staleSrc{s.Name, ts, lag})
 			}
-			lines = append(lines, fmt.Sprintf("### [%s] 更新:%s (共%d条)", s.Name, ts, len(s.Data)))
+			lines = append(lines, momoyuHeader(s.Name, ts, lag, len(s.Data)))
 			for i, it := range s.Data {
 				if i >= 15 {
 					break
@@ -137,6 +132,31 @@ func parseMomoyuTime(s string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// momoyuStamp 把接口给的更新时刻换成北京时间，并算出距 now 多少小时；解析不了时原样返回、lag 为 -1。
+func momoyuStamp(createTime string, now time.Time) (ts string, lag float64) {
+	t, ok := parseMomoyuTime(createTime)
+	if !ok {
+		return createTime, -1
+	}
+	if lag = now.Sub(t).Hours(); lag < 0 {
+		lag = 0 // 接口的钟比本机快一点时别写出负数
+	}
+	return t.Format("01-02 15:04"), lag
+}
+
+// momoyuHeader 是 parsed.txt 里每个源的表头。距采集多久在这里算好写进去，模型照抄、不自己算：
+// 2026-11-01 那档模型把「10-31 00:01」当成当天，豆瓣热话的 45.7 小时写成了 21.5 小时。
+func momoyuHeader(name, ts string, lag float64, n int) string {
+	if lag < 0 {
+		return fmt.Sprintf("### [%s] 更新:%s (共%d条)", name, ts, n)
+	}
+	ago := fmt.Sprintf("%.1f 小时", lag)
+	if lag < 1 {
+		ago = fmt.Sprintf("%d 分钟", int(lag*60+0.5))
+	}
+	return fmt.Sprintf("### [%s] 更新:%s（距采集 %s）(共%d条)", name, ts, ago, n)
 }
 
 var reAssetJS = regexp.MustCompile(`/assets/index-[\w.-]+\.js`)
