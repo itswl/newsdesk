@@ -52,11 +52,7 @@ const toolsAllowed = "Read,Write,Edit,Glob,Grep,Bash"
 // 单独拎出来是为了能测：这串参数里每一条都是一个开关，写漏一条不会有任何报错，
 // 只会安静地少一层防护或多继承一层配置。
 func claudeArgs(kind Kind, cfg *config.Config, settings, prompt string, danger bool) []string {
-	def, key := "claude-sonnet-5", "CLAUDE_MODEL"
-	if kind == API {
-		def, key = "", "FALLBACK_MODEL"
-	}
-	model := cfg.Get(key, def)
+	model := Model(cfg, kind)
 	if danger {
 		// 危险模式不设限：不钉工具面、不裁 MCP、也不砍设置来源——交互式会话里的
 		// 全局 MCP server 与技能正是「不限制能力」的一部分。
@@ -302,11 +298,11 @@ func Classify(out string) Failure {
 	return FailOther
 }
 
-// Model 某个引擎实际会用的模型名。
+// Model 某个引擎实际会用的模型名。默认值只在这里写一份，拼命令行的 claudeArgs 也从这里取。
 func Model(cfg *config.Config, kind Kind) string {
 	switch kind {
 	case Claude:
-		return cfg.Get("CLAUDE_MODEL", "claude-sonnet-5")
+		return cfg.Get("CLAUDE_MODEL", "claude-sonnet-5-5")
 	case Codex:
 		return cfg.Get("CODEX_MODEL", "gpt-5.6-luna")
 	case API:

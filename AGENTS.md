@@ -231,9 +231,12 @@ Trending 那一档有早间草稿：文件在，但那是上一轮的产物，16
   以前用 `json.Decoder` 串着解，一碰到就把剩下的整段倾进日志、`result` 事件错过，
   用量行就丢了（10-19 两档）。现在 `message` 两种形状都收，权限拒绝单独打成
   「⚠ 工具调用被拒（Bash）：…」。无人值守没有审批面，要审批的调用一律当场拒。实测会被拒的
-  有四种：Bash 里内联跑 Python（heredoc / `python3 -c` 里带字典、f-string 的报「brace with quote
-  character」，11-01 那档只有元组的也被拒，报「names a path that is computed at run time」）、
-  循环里的变量、`cd` 之后接相对路径、Write 写 `reports/` 与临时目录之外。
+  有四种：Bash 里的 heredoc 与内联 Python（带字典、f-string 的报「brace with quote character」；
+  11-01 只有元组的报「names a path that is computed at run time」；11-02 用 `cat > 脚本 <<` 写文件
+  报「Parser skipped input between top-level statements」，`python3 - <<` 接管道报「A file redirect
+  in this command can't be checked before it runs」。heredoc 也有放行的，10-26、10-30 共三次：过不过
+  看内容、事先猜不准，所以 prompt 一律不让用）、循环里的变量、`cd` 之后接相对路径、
+  Write 写 `reports/` 与临时目录之外。
   四份 prompt 写明了替代写法（脚本先 Write 进临时目录再跑，见「仓库内的凭据文件」一节末尾）。
   任务日志里只有拒绝原因，**被拒的原命令在引擎的会话记录里**：`~/.claude/projects/` 下按
   仓库路径命名的目录，一档一个 `<会话 id>.jsonl`。

@@ -78,7 +78,7 @@ func TestEveryFailureHasActionableHint(t *testing.T) {
 func TestDescribeNamesEngineAndModel(t *testing.T) {
 	cfg := cfgOf(t, strings.Join([]string{
 		"ENGINE=claude",
-		"CLAUDE_MODEL=claude-sonnet-5",
+		"CLAUDE_MODEL=claude-sonnet-5-5",
 		"CODEX_MODEL=gpt-5.6-luna",
 		"ENGINE_FALLBACK=api",
 		"FALLBACK_BASE_URL=https://gw.example.com/v1",
@@ -87,7 +87,7 @@ func TestDescribeNamesEngineAndModel(t *testing.T) {
 	}, "\n"))
 
 	for kind, want := range map[Kind]string{
-		Claude: "claude / claude-sonnet-5",
+		Claude: "claude / claude-sonnet-5-5",
 		Codex:  "codex / gpt-5.6-luna",
 		// api 走的仍是 claude CLI，只是换了端点——必须连端点一起报，
 		// 同一个 "api" 指向不同网关时产出可以完全不同。
@@ -139,7 +139,7 @@ func TestDescribeFlagsMissingEndpoint(t *testing.T) {
 // 分析层的工具面必须是钉死的。这串参数里每一条都是一个开关，写漏一条不会有任何
 // 报错——要么安静地多继承一层交互式会话的配置，要么安静地少一层防护。
 func TestClaudeArgsPinAnalysisLayer(t *testing.T) {
-	cfg := cfgOf(t, "CLAUDE_MODEL=claude-sonnet-5\nFALLBACK_MODEL=glm-5.3\n")
+	cfg := cfgOf(t, "CLAUDE_MODEL=claude-sonnet-5-5\nFALLBACK_MODEL=glm-5.3\n")
 
 	in := func(args []string, want string) bool {
 		for _, a := range args {
