@@ -27,6 +27,8 @@ const Window = 7
 
 // Cap 只带信号不带清单：全量条目在各源自己的文件里已经有了，
 // 这里重复一遍既占上下文又没新信息。
+//
+// ai 的 repeat_items 不截：那份名单本身就是判定，见 ainews()。
 const Cap = 12
 
 var reDate = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -65,15 +67,50 @@ func loadJSON(path string, v any) bool {
 // ⚠️ 先小写再剥协议头：反过来的话 ^https?:// 是大小写敏感的，一条
 // HTTPS://EXAMPLE.COM/... 剥不掉协议头，就和它的小写版本判成两条，
 // 同一篇文章第二天会被当成新条目重新报一遍。
+//
+// ⚠️ 查询参数只剥跟踪用的那几种，不能整段剥掉。以前 `?` 之后一概不要，HN 的
+// Ask/Tell/Launch 帖（`item?id=…`）、YouTube（`watch?v=…`）、WordPress（`?p=…`）
+// 各自塌成同一个链接：窗内第一帖之后的每一条新帖都被判成「X 日已出现」，日期还是
+// 别的帖子的。11-02 的 Mythos 泄露、11-04 的 Codex 训练开关都这样被写成了旧闻。
 func NormLink(u string) string {
 	s := strings.ToLower(strings.TrimSpace(u))
-	if i := strings.IndexAny(s, "?#"); i >= 0 {
+	if i := strings.IndexByte(s, '#'); i >= 0 {
 		s = s[:i]
+	}
+	query := ""
+	if i := strings.IndexByte(s, '?'); i >= 0 {
+		s, query = s[:i], s[i+1:]
 	}
 	s = strings.TrimRight(s, "/")
 	s = strings.TrimPrefix(s, "https://")
 	s = strings.TrimPrefix(s, "http://")
-	return strings.TrimPrefix(s, "www.")
+	s = strings.TrimPrefix(s, "www.")
+	var keep []string
+	for _, p := range strings.Split(query, "&") {
+		if p != "" && !trackingParam(p) {
+			keep = append(keep, p)
+		}
+	}
+	if len(keep) == 0 {
+		return s
+	}
+	sort.Strings(keep) // 参数换个顺序还是同一个地址
+	return s + "?" + strings.Join(keep, "&")
+}
+
+// trackingParam 只认记录来源的参数：同一篇内容从不同入口进来，这些值不一样，
+// 指向的东西却不变。宁可少认：多认一个，就有一批不同的内容被归成同一条。
+func trackingParam(p string) bool {
+	k, _, _ := strings.Cut(p, "=")
+	if strings.HasPrefix(k, "utm_") {
+		return true
+	}
+	switch k {
+	case "fbclid", "gclid", "dclid", "msclkid", "yclid", "igshid",
+		"mc_cid", "mc_eid", "_hsenc", "_hsmi", "mkt_tok", "ref", "ref_src", "smid":
+		return true
+	}
+	return false
 }
 
 var rePunct = regexp.MustCompile(`[【】\[\]（）()「」“”"'：:，,。.！!？?、·\-—_\s]`)

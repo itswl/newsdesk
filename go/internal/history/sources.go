@@ -19,13 +19,14 @@ func ainews(st *store.Store, date, dd string) (map[string]any, error) {
 	var cur aiItems
 	loadJSON(filepath.Join(dd, "items.json"), &cur)
 
-	seen := map[string]string{} // 归一化链接 -> 首次见到的日期
+	seen := map[string]string{} // 归一化链接 -> 窗内最早见到的日期
 	for _, d := range daysBefore(st, "ainews", date, Window) {
 		var past aiItems
 		loadJSON(filepath.Join(d[1], "items.json"), &past)
 		for _, it := range past.Items {
 			k := NormLink(it.Link)
-			if _, ok := seen[k]; !ok {
+			// daysBefore 由近到远，先到先得记下的是最近一次，不是 first_seen
+			if f, ok := seen[k]; !ok || d[0] < f {
 				seen[k] = d[0]
 			}
 		}
@@ -67,10 +68,13 @@ func ainews(st *store.Store, date, dd string) (map[string]any, error) {
 			}
 		}
 	}
+	// repeat_items 全列，不截到 Cap：新条目不列，prompt 按「不在这份名单里的就是新的」
+	// 用它，名单就是判定本身。以前和别的名单一样截到 12 条，截掉的重复就成了今日增量：
+	// 10-21 到 11-05 有 10 天超过 12 条、漏列 73 条。窗内最多见过 29 条，全列也就几 KB。
 	return map[string]any{
 		"new_count":      newCount,
 		"repeat_count":   len(rep),
-		"repeat_items":   cut(rep, Cap), // 新条目不列——不在这份名单里的就是新的
+		"repeat_items":   rep,
 		"sources_failed": failed,
 		"sources_quiet":  quiet,
 	}, nil

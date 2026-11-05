@@ -47,6 +47,95 @@ func TestSourceGapsSplitFailedFromQuiet(t *testing.T) {
 	}
 }
 
+// 判重的键：同一篇内容要归到一起，不同的内容不能归到一起。
+//
+// ⚠️ 后一半以前是坏的：`?` 之后整段剥掉，HN 的帖子、YouTube 视频各自塌成一个链接，
+// 窗内第一帖之后的新帖全被判成「X 日已出现」。
+func TestNormLink(t *testing.T) {
+	same := [][2]string{
+		{"HTTPS://WWW.Example.com/Post/", "https://example.com/post"},
+		{"https://example.com/a?utm_source=rss&utm_medium=feed", "https://example.com/a"},
+		{"https://example.com/a?id=3&utm_campaign=x&fbclid=0123", "https://example.com/a?id=3"},
+		{"https://example.com/a?b=2&a=1", "https://example.com/a?a=1&b=2"},
+		{"https://example.com/a/#comments", "https://example.com/a"},
+		{"https://example.com/a?", "https://example.com/a"},
+	}
+	for _, c := range same {
+		if a, b := NormLink(c[0]), NormLink(c[1]); a != b {
+			t.Errorf("%q → %q，%q → %q，应当相同", c[0], a, c[1], b)
+		}
+	}
+	differ := [][2]string{
+		{"https://news.ycombinator.com/item?id=100", "https://news.ycombinator.com/item?id=200"},
+		{"https://www.youtube.com/watch?v=EXAMPLE1", "https://www.youtube.com/watch?v=EXAMPLE2"},
+		{"https://example.com/?p=1", "https://example.com/?p=2"},
+	}
+	for _, c := range differ {
+		if a := NormLink(c[0]); a == NormLink(c[1]) {
+			t.Errorf("%q 与 %q 都归成了 %q，应当不同", c[0], c[1], a)
+		}
+	}
+}
+
+// ai 的判重名单必须全列，first_seen 必须是窗内第一次出现的那天。
+//
+// ⚠️ 两条以前都是错的：名单和别的名单一样截到 Cap，而 prompt 按「不在名单里的就是新的」
+// 用它，截掉的重复就成了今日增量；first_seen 取的是由近到远第一个碰到的日子，也就是最近一次。
+func TestAinewsRepeatsAreCompleteAndDatedByFirstSighting(t *testing.T) {
+	root := t.TempDir()
+	st := store.New(root)
+	write := func(day string, links ...string) {
+		items := make([]map[string]string, len(links))
+		for i, l := range links {
+			items[i] = map[string]string{"title": l, "source": "S", "link": l}
+		}
+		raw, err := json.Marshal(map[string]any{"items": items, "sources": []any{}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := filepath.Join(root, "data", "ainews", day)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "items.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const early = "https://example.com/seen-twice"
+	var yesterday []string
+	for i := 0; i < Cap+3; i++ {
+		yesterday = append(yesterday, fmt.Sprintf("https://example.com/post/%d", i))
+	}
+	write("2026-10-01", early, "https://news.ycombinator.com/item?id=100")
+	write("2026-10-02", append(yesterday, early)...)
+	today := append(append([]string{}, yesterday...), early,
+		"https://news.ycombinator.com/item?id=200",  // 新帖，只是同站
+		"https://example.com/post/0?utm_source=rss") // 同一篇，换了个入口
+	write("2026-10-03", today...)
+
+	out, err := ainews(st, "2026-10-03", filepath.Join(root, "data", "ainews", "2026-10-03"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, _ := out["repeat_items"].([]map[string]any)
+	if want := Cap + 5; len(rep) != want || out["repeat_count"] != want {
+		t.Fatalf("repeat_items %d 条、repeat_count %v，想要都是 %d", len(rep), out["repeat_count"], want)
+	}
+	if out["new_count"] != 1 {
+		t.Errorf("new_count = %v，想要 1（只有 item?id=200 是新的）", out["new_count"])
+	}
+	first := map[string]any{}
+	for _, r := range rep {
+		first[r["title"].(string)] = r["first_seen"]
+	}
+	if first[early] != "2026-10-01" {
+		t.Errorf("%s 的 first_seen = %v，想要窗内最早的 2026-10-01", early, first[early])
+	}
+	if first["https://example.com/post/0?utm_source=rss"] != "2026-10-02" {
+		t.Error("只差跟踪参数的链接应当判成重复")
+	}
+}
+
 // 在榜期数必须等于窗内实际出现的期数。
 //
 // ⚠️ 曾经 rank_history 截断到 4 条、boards_seen 用截断后的长度算，于是连续在榜 7 期
