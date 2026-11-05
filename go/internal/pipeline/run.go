@@ -100,7 +100,22 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	}
 
 	done := step(3, "模型分析")
+	// ai 的新旧、出处、口径由代码定（history.JudgeAI / ArrangeAI）：分析前把判定写进 digest，
+	// 分析后按模型标的〔编号〕排版。跳过采集时也要做——digest 可能是旧代码写的。
+	// 两步出错都不拦着发布：最坏是退回模型自己写的样子。
+	if o.Task.Key == "ai" {
+		if err := annotateAI(st, o.Date, out); err != nil {
+			fmt.Fprintf(out, "  ⚠ 新旧判定失败，digest 没有标签：%v\n", err)
+		}
+	}
 	ar, err := Analyze(ctx, o.Task, o.Date, o.Cfg, o.Root, o.Home, out, o.Engine)
+	if err == nil && o.Task.Key == "ai" {
+		if p, ok := ReportPath(o.Root, o.Date, o.Task); ok {
+			if err := arrangeAI(st, o.Date, p, out); err != nil {
+				fmt.Fprintf(out, "  ⚠ 排版失败，照模型写的原样发布：%v\n", err)
+			}
+		}
+	}
 	done()
 	res.Engine, res.Failure, res.Output = ar.Engine, ar.Failure, ar.Output
 	res.Usage, res.FellBack, res.PrimaryFailure = ar.Usage, ar.FellBack, ar.PrimaryFailure

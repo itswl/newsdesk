@@ -59,7 +59,7 @@ type Item struct {
 	Comment int    `json:"comments,omitempty"`
 }
 
-type aiDoc struct {
+type AIDoc struct {
 	FetchedAt   string `json:"fetched_at"`
 	WindowHours int    `json:"window_hours"`
 	Items       []Item `json:"items"`
@@ -116,7 +116,7 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 	}
 	cutoff := time.Now().Add(-time.Duration(o.Hours) * time.Hour)
 
-	doc := aiDoc{FetchedAt: time.Now().Format(time.RFC3339), WindowHours: o.Hours}
+	doc := AIDoc{FetchedAt: time.Now().Format(time.RFC3339), WindowHours: o.Hours}
 
 	// Anthropic 没有 RSS，单独解析页面
 	if items, err := anthropicNews(ctx, c); err != nil {
@@ -180,7 +180,7 @@ func AINews(ctx context.Context, c *Client, st *store.Store, date string, o AIOp
 		return err
 	}
 	if err := os.WriteFile(filepath.Join(dd, "digest.txt"),
-		[]byte(digest(doc)), 0o644); err != nil {
+		[]byte(AIDigest(doc, nil)), 0o644); err != nil {
 		return err
 	}
 	fmt.Fprintf(c.w(), "-> %s/{items.json, digest.txt}  共 %d 条\n", st.RelTo(dd), len(doc.Items))
@@ -491,7 +491,7 @@ type hnHit struct {
 
 var aiKW = regexp.MustCompile(`(?i)\b(ai|llm|gpt|claude|gemini|openai|anthropic|deepmind|deepseek|qwen|llama|mistral|nvidia|gpu|tpu|agent|agentic|transformer|diffusion|model|inference|training|rag|embedding|multimodal|reasoning|copilot|cursor|xai|grok)\b`)
 
-func hnAlgolia(ctx context.Context, c *Client, doc *aiDoc, hours int) (int, error) {
+func hnAlgolia(ctx context.Context, c *Client, doc *AIDoc, hours int) (int, error) {
 	since := time.Now().Add(-time.Duration(hours) * time.Hour).Unix()
 	// numericFilters 里的 > 必须 URL 编码成 %3E，否则 Algolia 直接 400。
 	// 门槛 40 分是为了滤掉噪声——低分帖在 36 小时窗里能有几百条。
@@ -526,15 +526,21 @@ func hnAlgolia(ctx context.Context, c *Client, doc *aiDoc, hours int) (int, erro
 	return n, nil
 }
 
-// digest 给模型读的纯文本摘要。按源分组，源的顺序固定，便于模型对照分层。
-func digest(doc aiDoc) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "AI 新闻采集 · %s\n", time.Now().Format("2006-01-02 15:04 -0700"))
-	b.WriteString(strings.Repeat("=", 70) + "\n")
-	for _, s := range doc.Sources {
-		fmt.Fprintf(&b, "  %-18s %-5s 总 %-4d 窗内 %d\n", s.Source, s.Status, s.Total, s.Kept)
+// LoadAIDoc 读某天的 items.json。
+func LoadAIDoc(path string) (AIDoc, error) {
+	var doc AIDoc
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return doc, err
 	}
-	b.WriteString("\n")
+	return doc, json.Unmarshal(raw, &doc)
+}
+
+// AIOrder 是 digest 里条目的顺序：按源分组，源按 srcRank 排，源内保持抓取顺序。
+//
+// 〔编号〕就是条目在这个顺序里的位置（从 1 起）。digest 与报告排版（internal/brief）
+// 都按它编号，所以顺序只在这里定义。
+func AIOrder(doc AIDoc) []Item {
 	bySrc := map[string][]Item{}
 	var order []string
 	for _, it := range doc.Items {
@@ -544,18 +550,71 @@ func digest(doc aiDoc) string {
 		bySrc[it.Source] = append(bySrc[it.Source], it)
 	}
 	sort.SliceStable(order, func(i, j int) bool { return srcRank(order[i]) < srcRank(order[j]) })
+	out := make([]Item, 0, len(doc.Items))
 	for _, src := range order {
-		items := bySrc[src]
-		fmt.Fprintf(&b, "\n## %s (%s) — %d 条\n", src, items[0].Tier, len(items))
-		for i, it := range items {
-			extra := ""
-			if it.Points > 0 {
-				extra = fmt.Sprintf("  [%d分/%d评]", it.Points, it.Comment)
+		out = append(out, bySrc[src]...)
+	}
+	return out
+}
+
+// AITier 源的分层。窗内一条都没有的源也要知道它是不是一手厂商源（口径里要说
+// 「本期无官方新公告」），所以不能只从条目上读。
+func AITier(source string) string {
+	for _, f := range Feeds {
+		if f.Name == source {
+			return f.Tier
+		}
+	}
+	switch source {
+	case "Anthropic", "Qwen":
+		return "一手·厂商公告"
+	case "HN Algolia":
+		return "社区·高热"
+	}
+	return ""
+}
+
+// AIDigest 给模型读的纯文本摘要。按源分组，源的顺序固定，便于模型对照分层。
+//
+// 每条带〔编号〕；tag 非 nil 时，条目后面跟上它给的【标签】（新旧判定，见
+// internal/brief）。采集时还没有跨期数据，先写一份不带标签的。
+func AIDigest(doc AIDoc, tag func(id int) string) string {
+	var b strings.Builder
+	at := time.Now()
+	if t, err := time.Parse(time.RFC3339, doc.FetchedAt); err == nil {
+		at = t
+	}
+	fmt.Fprintf(&b, "AI 新闻采集 · %s\n", at.Format("2006-01-02 15:04 -0700"))
+	b.WriteString(strings.Repeat("=", 70) + "\n")
+	for _, s := range doc.Sources {
+		fmt.Fprintf(&b, "  %-18s %-5s 总 %-4d 窗内 %d\n", s.Source, s.Status, s.Total, s.Kept)
+	}
+	b.WriteString("\n〔编号〕供正文引用；【标签】是程序按条目日期和近 7 天抓取记录判定的新旧。\n")
+	items := AIOrder(doc)
+	for i, it := range items {
+		if i == 0 || it.Source != items[i-1].Source {
+			n := 0
+			for _, x := range items[i:] {
+				if x.Source != it.Source {
+					break
+				}
+				n++
 			}
-			fmt.Fprintf(&b, "%2d. %s%s\n    %s  %s\n", i+1, it.Title, extra, it.Date, it.Link)
-			if it.Summary != "" {
-				fmt.Fprintf(&b, "    %s\n", truncate(it.Summary, 300))
+			fmt.Fprintf(&b, "\n## %s (%s) — %d 条\n", it.Source, it.Tier, n)
+		}
+		extra := ""
+		if it.Points > 0 {
+			extra = fmt.Sprintf("  [%d分/%d评]", it.Points, it.Comment)
+		}
+		label := ""
+		if tag != nil {
+			if t := tag(i + 1); t != "" {
+				label = "  【" + t + "】"
 			}
+		}
+		fmt.Fprintf(&b, "〔%d〕%s%s%s\n    %s  %s\n", i+1, it.Title, extra, label, it.Date, it.Link)
+		if it.Summary != "" {
+			fmt.Fprintf(&b, "    %s\n", truncate(it.Summary, 300))
 		}
 	}
 	return b.String()

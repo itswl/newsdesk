@@ -14,12 +14,10 @@ type aiItems struct {
 	Sources [][]any `json:"sources"`
 }
 
-// ainews 按链接判重，让「只报增量」可核验而不是靠模型印象。
-func ainews(st *store.Store, date, dd string) (map[string]any, error) {
-	var cur aiItems
-	loadJSON(filepath.Join(dd, "items.json"), &cur)
-
-	seen := map[string]string{} // 归一化链接 -> 窗内最早见到的日期
+// AIFirstSeen 是 ai 判重的唯一实现：归一化链接 -> 窗内最早见到它的日期。
+// history.json 的 repeat_items 与报告排版（internal/brief）都用它，不能各写一份。
+func AIFirstSeen(st *store.Store, date string) map[string]string {
+	seen := map[string]string{}
 	for _, d := range daysBefore(st, "ainews", date, Window) {
 		var past aiItems
 		loadJSON(filepath.Join(d[1], "items.json"), &past)
@@ -31,6 +29,15 @@ func ainews(st *store.Store, date, dd string) (map[string]any, error) {
 			}
 		}
 	}
+	return seen
+}
+
+// ainews 按链接判重，让「只报增量」可核验而不是靠模型印象。
+func ainews(st *store.Store, date, dd string) (map[string]any, error) {
+	var cur aiItems
+	loadJSON(filepath.Join(dd, "items.json"), &cur)
+
+	seen := AIFirstSeen(st, date)
 
 	newCount := 0
 	rep := []map[string]any{}

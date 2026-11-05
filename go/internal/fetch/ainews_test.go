@@ -123,3 +123,33 @@ func TestParseAnthropicNewsRejectsUndated(t *testing.T) {
 		t.Fatalf("什么都没解析出来应报失败，得到 %v", err)
 	}
 }
+
+// 〔编号〕就是条目在 AIOrder 里的位置：digest 与排版都按它编号，顺序只能有一处。
+// 源按 srcRank 排（Anthropic 最前，Feeds 依次，不在 Feeds 里的排最后），源内保持抓取顺序。
+func TestAIDigestNumbersInOrder(t *testing.T) {
+	doc := AIDoc{Items: []Item{
+		{Source: "HN Algolia", Title: "社区帖"},
+		{Source: "TechCrunch AI", Title: "媒体一"},
+		{Source: "OpenAI", Title: "公告"},
+		{Source: "TechCrunch AI", Title: "媒体二"},
+		{Source: "Anthropic", Title: "官网"},
+	}}
+	var got []string
+	for _, it := range AIOrder(doc) {
+		got = append(got, it.Title)
+	}
+	if want := "官网 公告 媒体一 媒体二 社区帖"; strings.Join(got, " ") != want {
+		t.Errorf("顺序 %q，想要 %q", strings.Join(got, " "), want)
+	}
+	d := AIDigest(doc, func(id int) string {
+		if id == 2 {
+			return "今日"
+		}
+		return ""
+	})
+	for _, s := range []string{"〔1〕官网\n", "〔2〕公告  【今日】\n", "〔5〕社区帖\n"} {
+		if !strings.Contains(d, s) {
+			t.Errorf("digest 里缺 %q：\n%s", s, d)
+		}
+	}
+}
