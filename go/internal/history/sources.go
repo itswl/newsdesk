@@ -1,6 +1,7 @@
 package history
 
 import (
+	"fmt"
 	"path/filepath"
 	"sort"
 
@@ -136,9 +137,35 @@ func momoyu(st *store.Store, date, dd string) (map[string]any, error) {
 		hist = append(hist, snap{d[0], momoyuTitles(past)})
 	}
 
-	persist := []map[string]any{}
-	fresh := 0
-	for k, v := range today {
+	// 持续在榜的分两份。能比冷热的（今昨两头都读得出热度值）全列，冷热由 heatTrend 判好；
+	// 比不了的只按源汇总条数和最长天数——它们只能说「还在榜上」。
+	//
+	// ⚠️ 以前是一份名单按在榜天数排、截前 12 条：挂得最久的是掘金文章和豆瓣话题，大多
+	// 没有热度值，真正能看冷热的知乎、微博条目通常只挂两三天，全被截掉了（11-06 那档模型
+	// 原话：前 12 条里没有带热度值的知乎或微博条目，判断不了升温还是退烧）。天数相同的
+	// 还按 map 的随机顺序排，截下来哪 12 条每次都可能不一样。
+	type heatRec struct {
+		rec   map[string]any
+		ratio float64
+	}
+	type example struct {
+		title string
+		days  int
+	}
+	type quiet struct {
+		count, longest int
+		ex             []example
+	}
+	var heat []heatRec
+	other := map[string]*quiet{}
+	keys := make([]string, 0, len(today))
+	for k := range today {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	total, fresh := 0, 0
+	for _, k := range keys {
+		v := today[k]
 		var ds []string
 		var firstExtra string
 		for _, h := range hist {
@@ -149,36 +176,112 @@ func momoyu(st *store.Store, date, dd string) (map[string]any, error) {
 				ds = append(ds, h.day)
 			}
 		}
-		rec := map[string]any{"title": v.Title, "src": v.Src, "today_extra": v.Extra,
-			"days_on_list": len(ds) + 1, "prev_days": cutStr(ds, 3)}
-		if len(ds) > 0 {
-			rec["prev_extra"] = firstExtra
-			persist = append(persist, rec)
-		} else {
+		if len(ds) == 0 {
 			fresh++
+			continue
 		}
+		total++
+		days := len(ds) + 1
+		if change, trend, ratio, ok := heatTrend(v.Src, firstExtra, v.Extra); ok {
+			heat = append(heat, heatRec{map[string]any{"title": v.Title, "src": v.Src,
+				"days_on_list": days, "prev_days": cutStr(ds, 3), "prev_extra": firstExtra,
+				"today_extra": v.Extra, "change": change, "trend": trend}, ratio})
+			continue
+		}
+		q := other[v.Src]
+		if q == nil {
+			q = &quiet{}
+			other[v.Src] = q
+		}
+		q.count++
+		q.longest = max(q.longest, days)
+		q.ex = append(q.ex, example{v.Title, days})
 	}
-	sort.SliceStable(persist, func(i, j int) bool {
-		return persist[i]["days_on_list"].(int) > persist[j]["days_on_list"].(int)
+	// 知乎、微博在前（判得了升降），各自按变化幅度从涨到跌
+	sort.SliceStable(heat, func(i, j int) bool {
+		a, b := heat[i], heat[j]
+		ia, ib := instantHeat[a.rec["src"].(string)], instantHeat[b.rec["src"].(string)]
+		if ia != ib {
+			return ia
+		}
+		if a.rec["src"] != b.rec["src"] {
+			return a.rec["src"].(string) < b.rec["src"].(string)
+		}
+		return a.ratio > b.ratio
 	})
+	persist := make([]map[string]any, len(heat))
+	for i, h := range heat {
+		persist[i] = h.rec
+	}
+	others := map[string]any{}
+	for src, q := range other {
+		// 举例挑在榜最久的三条，同天数按标题
+		sort.Slice(q.ex, func(i, j int) bool {
+			if q.ex[i].days != q.ex[j].days {
+				return q.ex[i].days > q.ex[j].days
+			}
+			return q.ex[i].title < q.ex[j].title
+		})
+		ex := []string{}
+		for _, e := range q.ex[:min(3, len(q.ex))] {
+			ex = append(ex, fmt.Sprintf("%s（%d 天）", e.title, e.days))
+		}
+		others[src] = map[string]any{"count": q.count, "longest_days": q.longest, "examples": ex}
+	}
 
-	dropped := []map[string]any{}
+	// 掉榜：只收读得出热度值的（以前判的是「额外信息非空」，爱范儿的分类、值得买的商家、
+	// 虎嗅的「50分钟前」都算了进去）。各源的热度不在一个量级（知乎「1374 万」、微博「115.3万」），
+	// 混在一起按数排的话前 12 条全是知乎，所以每源各取掉榜前最热的几条：知乎、微博各 4 条，
+	// 其余读得出数的源各 2 条。
+	type drop struct {
+		rec map[string]any
+		val float64
+	}
+	bySrc := map[string][]drop{}
+	nDrop := 0
 	if len(hist) > 0 {
 		for k, v := range hist[0].m {
-			// 掉榜项只留原本有热度值的：没热度值的源本来就分不出冷热，列出来是噪声
-			if _, still := today[k]; !still && v.Extra != "" {
-				dropped = append(dropped, map[string]any{
-					"title": v.Title, "src": v.Src, "last_extra": v.Extra, "last_day": hist[0].day})
+			if _, still := today[k]; still {
+				continue
+			}
+			if val, ok := heatValue(v.Extra); ok {
+				bySrc[v.Src] = append(bySrc[v.Src], drop{map[string]any{
+					"title": v.Title, "src": v.Src, "last_extra": v.Extra, "last_day": hist[0].day}, val})
+				nDrop++
 			}
 		}
-		sort.SliceStable(dropped, func(i, j int) bool {
-			return dropped[i]["title"].(string) < dropped[j]["title"].(string)
+	}
+	srcs := make([]string, 0, len(bySrc))
+	for src := range bySrc {
+		srcs = append(srcs, src)
+	}
+	sort.Slice(srcs, func(i, j int) bool {
+		if instantHeat[srcs[i]] != instantHeat[srcs[j]] {
+			return instantHeat[srcs[i]]
+		}
+		return srcs[i] < srcs[j]
+	})
+	dropped := []map[string]any{}
+	for _, src := range srcs {
+		ds := bySrc[src]
+		sort.Slice(ds, func(i, j int) bool {
+			if ds[i].val != ds[j].val {
+				return ds[i].val > ds[j].val
+			}
+			return ds[i].rec["title"].(string) < ds[j].rec["title"].(string)
 		})
+		k := 2
+		if instantHeat[src] {
+			k = 4
+		}
+		for _, d := range ds[:min(k, len(ds))] {
+			dropped = append(dropped, d.rec)
+		}
 	}
 	out := map[string]any{
-		"history_days": len(hist), "persistent": cut(persist, Cap),
-		"persistent_total": len(persist), "new_today_count": fresh,
-		"dropped_from_prev": cut(dropped, Cap),
+		"history_days": len(hist), "persistent": persist, "persistent_other": others,
+		"persistent_total": total, "new_today_count": fresh,
+		"dropped_from_prev": dropped, "dropped_total": nDrop,
 	}
 	if prevDay != "" {
 		out["freshness"] = momoyuFreshness(cur, prevRaw, prevDay)

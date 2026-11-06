@@ -280,3 +280,72 @@ func TestMomoyuFreshnessCountsNewEntriesPerSource(t *testing.T) {
 		t.Errorf("no_new = %v，想要 [豆瓣热话]", got)
 	}
 }
+
+// 持续在榜里能比冷热的全列、冷热由程序判；比不了的按源汇总。掉榜按源各取最热的几条，
+// 分类、商家这类读不出数的不算。
+//
+// ⚠️ 以前一份名单按在榜天数排、截前 12 条：挂得久的掘金文章把能比冷热的条目全挤掉了。
+// 11-01 到 11-05 有 5 天截掉了这样的条目（截下来的 12 条里可比的 0–4 条，全量是 2–8 条）。
+func TestMomoyuPersistentListsEveryComparableItem(t *testing.T) {
+	root := t.TempDir()
+	st := store.New(root)
+	type item struct{ Title, Extra string }
+	type source struct {
+		Name string `json:"name"`
+		Data []item `json:"data"`
+	}
+	write := func(day string, srcs ...source) {
+		raw, err := json.Marshal(map[string]any{"data": []any{map[string]any{"data": srcs}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		d := filepath.Join(root, "data", "momoyu", day)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(d, "raw.json"), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var juejin []item
+	for i := 0; i < 15; i++ {
+		juejin = append(juejin, item{Title: fmt.Sprintf("掘金长挂文章%02d", i)})
+	}
+	write("2026-10-01", source{"掘金", juejin})
+	write("2026-10-02",
+		source{"知乎热榜", []item{{"甲", "100 万"}, {"乙", "300 万"}, {"丙", "200 万"}}},
+		source{"微博热搜", []item{{"微一", "50万"}}},
+		source{"豆瓣热话", []item{{"豆一", "1.4万"}, {"豆二", ""}}},
+		source{"爱范儿", []item{{"分类标签", "产品"}}},
+		source{"掘金", juejin})
+	write("2026-10-03",
+		source{"知乎热榜", []item{{"甲", "150 万"}}},
+		source{"豆瓣热话", []item{{"豆一", "2.8万"}, {"豆二", ""}}},
+		source{"掘金", juejin})
+
+	out, err := momoyu(st, "2026-10-03", filepath.Join(root, "data", "momoyu", "2026-10-03"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, p := range out["persistent"].([]map[string]any) {
+		got = append(got, fmt.Sprint(p["src"], " ", p["title"], " ", p["change"], " ", p["trend"]))
+	}
+	if want := []string{"知乎热榜 甲 +50% 升温", "豆瓣热话 豆一 +100% 还在涨"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("persistent = %q，想要 %q", got, want)
+	}
+	jj := out["persistent_other"].(map[string]any)["掘金"].(map[string]any)
+	if jj["count"] != 15 || jj["longest_days"] != 3 || len(jj["examples"].([]string)) != 3 {
+		t.Errorf("掘金汇总 = %v", jj)
+	}
+	if out["persistent_total"] != 18 {
+		t.Errorf("persistent_total = %v，想要 18", out["persistent_total"])
+	}
+	var drops []string
+	for _, d := range out["dropped_from_prev"].([]map[string]any) {
+		drops = append(drops, d["title"].(string))
+	}
+	if want := []string{"微一", "乙", "丙"}; !reflect.DeepEqual(drops, want) || out["dropped_total"] != 3 {
+		t.Errorf("dropped = %q（共 %v），想要 %q（分类标签不算）", drops, out["dropped_total"], want)
+	}
+}
