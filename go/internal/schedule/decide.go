@@ -38,6 +38,24 @@ func retryDelay(attempt int) time.Duration {
 	return 30 * time.Minute
 }
 
+// offlineRetry 本机断网时隔多久再试一次。
+//
+// 断网不是这一档的错，不该吃三次重试的额度：11-06 晚上 Wi-Fi 从 19:41 掉到 22:07，
+// 21:45 那档 momoyu 按 3、10 分钟的间隔三次全撞在断网里，21:59 放弃，网 22:07 就回来了。
+// 断网期间每 10 分钟试一次（一次只是几秒的采集失败），直到补跑截止或当天结束。
+const offlineRetry = 10 * time.Minute
+
+// MarkOffline 把一次因本机断网而失败的结果改成「不算数」：次数退回去，记下断网，
+// 下一次按 offlineRetry 再试。
+func MarkOffline(st TaskState) TaskState {
+	if st.Attempts > 0 {
+		st.Attempts--
+	}
+	st.Offline = true
+	st.Reason = trunc("本机连不上外网，不计入失败次数："+st.Reason, 400)
+	return st
+}
+
 func giveUp(f engine.Failure) bool {
 	return f == engine.FailQuota || f == engine.FailBalance || f == engine.FailAuth ||
 		f == engine.FailModeration
@@ -61,6 +79,14 @@ func Decide(t task.Task, now time.Time, st TaskState) Decision {
 		case "ok", "skipped":
 			return Decision{Action: ActWait, Reason: "今天已处理"}
 		case "failed":
+			if st.Offline {
+				next := time.Unix(st.LastAttempt, 0).Add(offlineRetry)
+				if now.Before(next) {
+					return Decision{Action: ActWait,
+						Reason: fmt.Sprintf("上次失败时本机断网，%s 再试", next.Format("15:04"))}
+				}
+				break
+			}
 			if st.Attempts >= maxAttempts {
 				return Decision{Action: ActWait, Reason: fmt.Sprintf("今天已失败 %d 次，不再重试", st.Attempts)}
 			}
@@ -95,6 +121,9 @@ func Decide(t task.Task, now time.Time, st TaskState) Decision {
 	}
 	if st.Date == today && st.Status == "failed" {
 		why = fmt.Sprintf("第 %d 次重试", st.Attempts+1)
+		if st.Offline {
+			why = "断网后重试"
+		}
 	}
 	return Decision{Action: ActRun, Reason: why, Late: late}
 }

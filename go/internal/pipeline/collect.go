@@ -57,6 +57,9 @@ func Collect(ctx context.Context, key, date string, cfg *config.Config, st *stor
 	return fmt.Errorf("未知任务 %q", key)
 }
 
+// Online 本机此刻能不能连上外网，见 fetch.Online。调度器用它分辨失败是不是因为断网。
+func Online(ctx context.Context) bool { return fetch.Online(ctx) }
+
 // History 生成跨期比对。没有历史不是错误——首期本来就没有。
 func History(key, date string, st *store.Store, out io.Writer) error {
 	src, ok := source[key]

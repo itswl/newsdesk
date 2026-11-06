@@ -1,7 +1,9 @@
 package schedule
 
 import (
+	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
@@ -65,7 +67,9 @@ func loopAt(t *testing.T, root string) *Loop {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return NewLoop(root, root, cfg)
+	l := NewLoop(root, root, cfg)
+	l.Online = nil // 单测不碰网络：nil 当作能上网
+	return l
 }
 
 // 改了 config.conf 要自己生效，不用重启调度器。09-29 就是因为改完没重启，
@@ -374,5 +378,47 @@ func TestReconcileDoesNotInheritDangerAcrossDays(t *testing.T) {
 	}
 	if !st2.Tasks[tk.Key].Danger {
 		t.Error("同一天的危险模式标记应当保留")
+	}
+}
+
+// 断网时发不出去的告警，网络回来后补发，标题带「（补发）」、正文写明原定时刻。
+//
+// ⚠️ 11-06 那条 momoyu 失败告警就是这样丢的：发的那一刻 Wi-Fi 正掉着，之后再没人发。
+func TestAlertsQueuedWhileOfflineAreResent(t *testing.T) {
+	f := newConfFixture(t, "ENGINE=claude\n")
+	dead := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	dead.Close() // 连不上
+	f.write("ALERT_WEBHOOK=" + dead.URL + "\nENGINE=claude\n")
+	if changed, err := f.settled(); !changed || err != nil {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	online := false
+	f.l.Online = func(context.Context) bool { return online }
+	f.l.alert("newsdesk 任务失败", "任务 momoyu 放弃")
+	if len(f.l.pending) != 1 {
+		t.Fatalf("断网时发不出去的告警要记下来，pending=%d", len(f.l.pending))
+	}
+	f.l.flushAlerts(time.Now()) // 还断着：不补发，也不丢
+	if len(f.l.pending) != 1 {
+		t.Fatalf("还断着网就不该丢掉，pending=%d", len(f.l.pending))
+	}
+
+	got := make(chan string, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		got <- string(b)
+	}))
+	defer srv.Close()
+	f.write("ALERT_WEBHOOK=" + srv.URL + "\nENGINE=claude\n")
+	if changed, err := f.settled(); !changed || err != nil {
+		t.Fatalf("changed=%v err=%v", changed, err)
+	}
+	online = true
+	f.l.flushAlerts(time.Now().Add(3 * time.Minute)) // 离上次尝试超过 2 分钟
+	if len(f.l.pending) != 0 || len(got) != 1 {
+		t.Fatalf("网络回来后要补发：pending=%d 收到 %d 条", len(f.l.pending), len(got))
+	}
+	if body := <-got; !strings.Contains(body, "（补发）newsdesk 任务失败") || !strings.Contains(body, "原定") {
+		t.Errorf("补发的告警要写明是补发、原定何时：%s", body)
 	}
 }

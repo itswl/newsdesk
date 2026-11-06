@@ -128,3 +128,31 @@ func TestAfterRunAccumulatesAttempts(t *testing.T) {
 		t.Fatalf("跨天应从 1 开始，得到 %d", st2.Attempts)
 	}
 }
+
+// 断网造成的失败不计次数，隔 offlineRetry 再试，次数用不完；之后一次普通失败照常计数。
+//
+// ⚠️ 11-06 晚上 Wi-Fi 从 19:41 掉到 22:07，21:45 那档 momoyu 按 3、10 分钟的间隔三次全撞在
+// 断网里，21:59 当天放弃，网 22:07 就回来了。
+func TestOfflineFailureDoesNotUseUpRetries(t *testing.T) {
+	down := errors.New("采集失败: momoyu 连不上：dial tcp: lookup example.invalid: no such host")
+	now := at("2026-09-17 16:40")
+	st := TaskState{}
+	for i := 0; i < maxAttempts+2; i++ {
+		if d := Decide(trending, now, st); d.Action != ActRun {
+			t.Fatalf("断网失败 %d 次之后应当还会再试，得到 %s（%s）", i, d.Action, d.Reason)
+		}
+		next, final := AfterRun(st, "2026-09-17", "", "", down, 0, now)
+		st = MarkOffline(next)
+		if final || st.Attempts != 0 || !st.Offline {
+			t.Fatalf("断网失败不该计数：final=%v attempts=%d offline=%v", final, st.Attempts, st.Offline)
+		}
+		if d := Decide(trending, now.Add(offlineRetry-time.Minute), st); d.Action != ActWait {
+			t.Fatalf("断网后 %s 内不该重试，得到 %s", offlineRetry, d.Action)
+		}
+		now = now.Add(offlineRetry)
+	}
+	next, _ := AfterRun(st, "2026-09-17", "", "", errors.New("HTTP 500"), 0, now)
+	if next.Attempts != 1 || next.Offline {
+		t.Errorf("网回来之后的普通失败要照常计数：attempts=%d offline=%v", next.Attempts, next.Offline)
+	}
+}

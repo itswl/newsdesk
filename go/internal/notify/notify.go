@@ -8,6 +8,7 @@ package notify
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -63,12 +64,12 @@ func (n *Notifier) Send(title, text string) error {
 		}
 	}
 	if err != nil {
-		return err
+		return redact(err)
 	}
 	req.Header.Set("User-Agent", UA)
 	resp, err := n.Client.Do(req)
 	if err != nil {
-		return err
+		return redact(err)
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
@@ -76,6 +77,23 @@ func (n *Notifier) Send(title, text string) error {
 		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, trim(raw))
 	}
 	return bodyOK(raw)
+}
+
+// redact 报错里的地址只留到主机名。
+//
+// *url.Error 会把完整地址带进报错，而 webhook 的路径就是令牌（飞书是 /hook/<令牌>），
+// GET 形状的还带着整段正文。这条报错要进 scheduler.log：11-06 断网那次，飞书 webhook
+// 的完整地址就这样写进了日志。
+func redact(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	where := "（地址解析不了）"
+	if u, perr := url.Parse(ue.URL); perr == nil && u.Host != "" {
+		where = u.Scheme + "://" + u.Host
+	}
+	return fmt.Errorf("%s %s：%w", ue.Op, where, ue.Err)
 }
 
 // bodyOK 光看 HTTP 状态码不够。

@@ -29,6 +29,9 @@ type TaskState struct {
 	Danger      bool    `json:"danger,omitempty"`
 	LastAttempt int64   `json:"last_attempt_ts,omitempty"`
 	LateHours   float64 `json:"late_hours,omitempty"`
+	// Offline 上一次失败时本机连不上外网。这种失败不计入 Attempts，隔 offlineRetry 再试，
+	// 直到补跑截止——见 MarkOffline。
+	Offline bool `json:"offline,omitempty"`
 	// Fallback 这一档是主引擎失败、由兜底引擎跑出来的；FallbackWhy 是主引擎当时的
 	// 失败类别（quota / balance / auth / moderation / other）。
 	//

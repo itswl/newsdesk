@@ -1,6 +1,11 @@
 package fetch
 
 import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
 	"testing"
 	"time"
 )
@@ -48,6 +53,28 @@ func TestMomoyuHeaderCarriesTheLag(t *testing.T) {
 		ts, lag := momoyuStamp(c.created, run)
 		if got := momoyuHeader(c.name, ts, lag, c.n); got != c.want {
 			t.Errorf("表头\n  %s\n想要\n  %s", got, c.want)
+		}
+	}
+}
+
+// 没连上和连上了但内容不对要分开：前者等一等就好，后者多半是接口改了、要人去看。
+// 11-06 本机断网，momoyu 报的却是「接口不可用，候选路径见上，需人工确认」。
+func TestNetDownTellsNoConnectionFromBadContent(t *testing.T) {
+	dns := &url.Error{Op: "Get", URL: "https://example.com/api", Err: &net.OpError{Op: "dial", Net: "tcp",
+		Err: &net.DNSError{Err: "no such host", Name: "example.com", IsNotFound: true}}}
+	for _, c := range []struct {
+		err  error
+		want bool
+	}{
+		{dns, true},
+		{fmt.Errorf("包了一层：%w", dns), true},
+		{context.DeadlineExceeded, true},
+		{fmt.Errorf("HTTP 404: not found"), false},
+		{errors.New("invalid character '<' looking for beginning of value"), false},
+		{nil, false},
+	} {
+		if got := NetDown(c.err); got != c.want {
+			t.Errorf("NetDown(%v) = %v，想要 %v", c.err, got, c.want)
 		}
 	}
 }

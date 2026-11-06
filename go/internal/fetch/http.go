@@ -3,8 +3,10 @@ package fetch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"strings"
@@ -126,4 +128,54 @@ func (c *Client) GetWithHeaders(ctx context.Context, url string, headers map[str
 		return body, resp.Header, fmt.Errorf("HTTP %d: %s", resp.StatusCode, snippet(body))
 	}
 	return body, resp.Header, nil
+}
+
+// NetDown 这个错误是不是根本没连上：解析不了域名、拨不通、超时——不是连上了但内容不对。
+//
+// 两者的处置相反：连上了但内容不对多半是接口改了，要人去看；没连上要么是对方挂了，
+// 要么是本机断网（调度器用 Online 再分一次），等一等就好。11-06 晚上本机 Wi-Fi 掉了，
+// momoyu 报的却是「接口不可用，候选路径见上，需人工确认」，把人往接口改版上引。
+func NetDown(err error) bool {
+	if err == nil {
+		return false
+	}
+	var dns *net.DNSError
+	var op *net.OpError
+	return errors.As(err, &dns) || errors.As(err, &op) || os.IsTimeout(err) ||
+		errors.Is(err, context.DeadlineExceeded)
+}
+
+// onlineProbes 判断本机能不能上网时访问的地址：国内外各挑大站，一个有回应就算能。
+var onlineProbes = []string{"https://www.apple.com/", "https://www.baidu.com/", "https://github.com/"}
+
+// Online 本机此刻能不能连上外网。
+//
+// 调度器靠它分辨「这一档失败是因为本机断网」：11-06 晚上 Wi-Fi 从 19:41 掉到 22:07，
+// 21:45 那档 momoyu 三次重试在 14 分钟里用完、当天放弃，失败告警也发不出去。
+//
+// 走 HTTP（HEAD）而不是直接拨端口：跟采集走同一条路，代理环境变量照样生效——直连拨不通、
+// 走代理能通的机器上，拨端口会把「能上网」误判成断网，而误判的代价是真失败被当成断网、
+// 每 10 分钟重跑一次。回什么状态码都算能上网；ctx 管超时。
+func Online(ctx context.Context) bool {
+	hc := &http.Client{Transport: http.DefaultTransport}
+	ok := make(chan bool, len(onlineProbes))
+	for _, u := range onlineProbes {
+		go func(u string) {
+			req, err := http.NewRequestWithContext(ctx, http.MethodHead, u, nil)
+			if err == nil {
+				req.Header.Set("User-Agent", UA)
+				var resp *http.Response
+				if resp, err = hc.Do(req); err == nil {
+					resp.Body.Close()
+				}
+			}
+			ok <- err == nil
+		}(u)
+	}
+	for range onlineProbes {
+		if <-ok {
+			return true
+		}
+	}
+	return false
 }

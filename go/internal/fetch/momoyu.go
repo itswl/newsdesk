@@ -42,11 +42,20 @@ func Momoyu(ctx context.Context, c *Client, st *store.Store, date string) error 
 	if err == nil {
 		err = json.Unmarshal(raw, &resp)
 	}
+	if NetDown(err) {
+		// 没连上就别去探测候选路径（一样连不上），也别说「需人工确认」——那是在说接口改了
+		return fmt.Errorf("momoyu 连不上：%w", err)
+	}
 	if err != nil || len(resp.Data) == 0 {
-		// 接口变更时给出候选路径，但不猜着用——猜错会静默产出错误数据
+		// 接口变更时给出候选路径，但不猜着用——猜错会静默产出错误数据。
+		// 写进本档日志（c.w()）：以前打到 stderr，只落进 scheduler.log，本档日志里
+		// 只剩一句「候选路径见上」，上面却什么都没有。
+		if err == nil {
+			err = fmt.Errorf("返回里没有数据")
+		}
 		cands := momoyuDiscover(ctx, c)
-		fmt.Fprintf(os.Stderr, "主接口异常（%v），降级探测到的候选: %v\n", err, cands)
-		return fmt.Errorf("momoyu 接口不可用，候选路径见上，需人工确认")
+		fmt.Fprintf(c.w(), "主接口异常（%v），从页面打包产物里探测到的候选路径：%v\n", err, cands)
+		return fmt.Errorf("momoyu 主接口异常（%v），候选路径见本档日志，需人工确认", err)
 	}
 
 	nSrc, nItem := 0, 0

@@ -47,12 +47,12 @@ type Result struct {
 // Run 跑完一个任务的全流程。
 //
 // 顺序是有理由的：自检在发布之前，发布在最后。把自检放到发布之后等于没有自检。
-func Run(ctx context.Context, o Options) (Result, error) {
+func Run(ctx context.Context, o Options) (res Result, err error) {
 	start := time.Now()
 	if o.Date == "" {
 		o.Date = store.Today()
 	}
-	res := Result{Task: o.Task.Key, Date: o.Date}
+	res = Result{Task: o.Task.Key, Date: o.Date}
 
 	logPath := filepath.Join(o.Root, "logs", fmt.Sprintf("%s-%s.log", o.Date, o.Task.Key))
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
@@ -69,6 +69,13 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	if o.Log != nil {
 		out = io.MultiWriter(lf, o.Log)
 	}
+	// 失败原因要落在本档日志里。以前只有调度器那边记一句，本档日志停在「采集 用时 6s」，
+	// 单看它不知道这一档是成了还是挂了、挂在哪（11-06 momoyu）。
+	defer func() {
+		if err != nil {
+			fmt.Fprintf(out, "===== %s %s 失败：%v =====\n", o.Date, o.Task.Key, err)
+		}
+	}()
 	step := func(n int, name string) func() {
 		started := time.Now()
 		fmt.Fprintf(out, "\n[%s] %d/6 %s  %s\n",

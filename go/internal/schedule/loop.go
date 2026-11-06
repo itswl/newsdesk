@@ -36,6 +36,19 @@ type Loop struct {
 	watch cfgWatch
 	// 有一档是按旧配置发布的（跑的途中配置文件改过），新配置生效时要重发一次，见 runOne
 	republish bool
+
+	// Online 判断本机此刻能不能上网，默认 pipeline.Online。nil 当作能上网。
+	// 一档失败时先问它：断网造成的失败不计次数（见 MarkOffline），断网时没发出去的
+	// 告警记下来、网络回来后补发（见 flushAlerts）。
+	Online    func(context.Context) bool
+	pending   []pendingAlert
+	lastFlush time.Time
+}
+
+// pendingAlert 断网时没发出去的一条告警。
+type pendingAlert struct {
+	title, text string
+	at          time.Time
 }
 
 // cfgWatch 配置文件的监视状态。
@@ -56,6 +69,7 @@ func NewLoop(root, home string, cfg *config.Config) *Loop {
 	return &Loop{
 		Root: root, Home: home, Cfg: cfg,
 		Tick:       30 * time.Second,
+		Online:     pipeline.Online,
 		statePath:  st.State("schedule.json"),
 		healthPath: st.State("health.json"),
 	}
@@ -223,8 +237,61 @@ func (l *Loop) alert(title, text string) {
 	n := notify.New(l.Cfg.Get("ALERT_WEBHOOK", ""), l.Cfg.Get("ALERT_PAYLOAD", ""))
 	if err := n.Send(title, text); err != nil {
 		// 告警通道本身坏了是要知道的，但不能因此让调度停下来
+		if !l.online() {
+			// 本机断网：这条现在发不出去，记下来等网络回来补发。11-06 那条 momoyu 失败
+			// 告警就是这样丢的——发的那一刻 Wi-Fi 正掉着，之后再没人发
+			l.pending = append(l.pending, pendingAlert{title: title, text: text, at: time.Now()})
+			if len(l.pending) > maxPending {
+				l.pending = l.pending[len(l.pending)-maxPending:]
+			}
+			l.logf("!! 告警发送失败（本机连不上外网），网络回来后补发：%v", err)
+			return
+		}
 		l.logf("!! 告警发送失败：%v", err)
 	}
+}
+
+// maxPending 断网时最多攒几条告警；pendingTTL 攒了多久的就不补了——过时的告警只会误导。
+const (
+	maxPending = 20
+	pendingTTL = 24 * time.Hour
+)
+
+// flushAlerts 补发断网时没发出去的告警。每轮 tick 调，最多每 2 分钟真去试一次。
+func (l *Loop) flushAlerts(now time.Time) {
+	if len(l.pending) == 0 || now.Sub(l.lastFlush) < 2*time.Minute {
+		return
+	}
+	l.lastFlush = now
+	if !l.online() {
+		return
+	}
+	n := notify.New(l.Cfg.Get("ALERT_WEBHOOK", ""), l.Cfg.Get("ALERT_PAYLOAD", ""))
+	var keep []pendingAlert
+	for i, a := range l.pending {
+		if now.Sub(a.at) > pendingTTL {
+			l.logf("!! 断网时没发出去的告警已超过 %s，不再补发：%s", round(pendingTTL), a.title)
+			continue
+		}
+		text := a.text + fmt.Sprintf("\n（补发：原定 %s 发出，当时本机连不上外网）", a.at.Format("01-02 15:04"))
+		if err := n.Send("（补发）"+a.title, text); err != nil {
+			l.logf("!! 补发告警失败，稍后再试：%v", err)
+			keep = append(keep, l.pending[i:]...)
+			break
+		}
+		l.logf("已补发断网时没发出去的告警：%s（原定 %s）", a.title, a.at.Format("15:04"))
+	}
+	l.pending = keep
+}
+
+// online 本机此刻能不能上网，最多等 10 秒。
+func (l *Loop) online() bool {
+	if l.Online == nil {
+		return true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return l.Online(ctx)
 }
 
 func (l *Loop) health(st *State, run *Running) error {
@@ -312,6 +379,7 @@ func (l *Loop) tick(ctx context.Context, st *State) error {
 		l.republishSite(ctx)
 	}
 	now := time.Now()
+	l.flushAlerts(now)
 	for _, t := range task.All {
 		// 先跟产出对一次账。手动跑过的档在调度状态里没有记录，被中断过的档
 		// 还留着一条失败记录——两种情况都会让调度器把已经有报告的任务再跑
@@ -414,6 +482,11 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 	}
 
 	next, final := AfterRun(st.Tasks[t.Key], day, res.Engine, res.Failure, err, d.Late, end)
+	// 失败时先看本机能不能上网：断网造成的失败不吃重试额度，隔 offlineRetry 再试
+	offline := err != nil && !l.online()
+	if offline {
+		next, final = MarkOffline(next), false
+	}
 	next.Danger = danger
 	if res.FellBack {
 		next.Fallback, next.FallbackWhy = true, string(res.PrimaryFailure)
@@ -441,6 +514,11 @@ func (l *Loop) runOne(ctx context.Context, t task.Task, d Decision, st *State, n
 			l.logf("[%s] 跑的途中 %s 改过，这一档是按旧配置发布的；新配置生效后会按它重新发布一次",
 				t.Key, filepath.Base(l.watch.path))
 		}
+		return
+	}
+	if offline {
+		l.logf("[%s] 失败，但本机连不上外网，这次不计入失败次数，%s 后再试：%v",
+			t.Key, round(offlineRetry), err)
 		return
 	}
 	l.logf("[%s] 失败（第 %d 次）：%v", t.Key, next.Attempts, err)

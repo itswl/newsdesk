@@ -1,6 +1,7 @@
 package pipeline
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -243,7 +244,8 @@ func TestResetScratchDoesNotFollowSymlinks(t *testing.T) {
 // 而且不报错：翻译的用量、每个源的抓取结果、凭据自检的结论先后都这样丢过。新加的
 // 打印照抄 fmt.Printf 的话，这里会拦下。
 func TestStepsDoNotPrintToStdout(t *testing.T) {
-	direct := regexp.MustCompile(`\bfmt\.Print(f|ln)?\(`)
+	// fmt.Fprint*(os.Stderr/Stdout, …) 一样绕过了本档日志：11-06 momoyu 的失败详情就这样只落进 scheduler.log
+	direct := regexp.MustCompile(`\bfmt\.Print(f|ln)?\(|\bfmt\.Fprint(f|ln)?\(os\.Std(out|err)\b`)
 	for _, pkg := range []string{"fetch", "history", "leak", "translate", "engine"} {
 		files, err := filepath.Glob(filepath.Join("..", pkg, "*.go"))
 		if err != nil || len(files) == 0 {
@@ -263,5 +265,23 @@ func TestStepsDoNotPrintToStdout(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// 失败原因要落在本档日志里。以前只有调度器那边记一句，11-06 的 momoyu 日志停在
+// 「采集 用时 6s」，单看它不知道这一档挂了、挂在哪。
+func TestRunWritesFailureIntoTaskLog(t *testing.T) {
+	root := t.TempDir()
+	cfg, _ := config.Load(filepath.Join(root, "config.conf"))
+	_, err := Run(context.Background(), Options{Root: root, Cfg: cfg, Task: task.Task{Key: "nosuch"}, Date: "2026-11-06"})
+	if err == nil {
+		t.Fatal("未知任务应当失败")
+	}
+	b, rerr := os.ReadFile(filepath.Join(root, "logs", "2026-11-06-nosuch.log"))
+	if rerr != nil {
+		t.Fatal(rerr)
+	}
+	if !strings.Contains(string(b), "2026-11-06 nosuch 失败：采集失败") {
+		t.Errorf("本档日志里没有失败原因：\n%s", b)
 	}
 }

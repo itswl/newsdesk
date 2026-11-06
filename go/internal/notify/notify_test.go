@@ -2,6 +2,7 @@ package notify
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -92,4 +93,34 @@ func TestURLTemplateShape(t *testing.T) {
 	if !strings.HasPrefix(path, "/bark/") || strings.Contains(path, "{{TEXT}}") {
 		t.Errorf("URL 模板未替换: %q", path)
 	}
+}
+
+// 发送失败的报错要进 scheduler.log，不能带着 webhook 的路径：飞书的路径就是令牌，
+// GET 形状的还带着整段正文。11-06 断网那次，完整地址就这样写进了日志。
+func TestSendErrorHidesWebhookPath(t *testing.T) {
+	for _, hook := range []string{
+		"https://hooks.example.com/open-apis/bot/v2/hook/EXAMPLE-TOKEN-0123456789",
+		"https://bark.example.com/EXAMPLE-TOKEN-0123456789/{{TITLE}}/{{TEXT}}",
+	} {
+		n := New(hook, "")
+		n.Client = &http.Client{Transport: failingTransport{}}
+		err := n.Send("标题", "正文 EXAMPLE-BODY")
+		if err == nil {
+			t.Fatalf("%s：应当报错", hook)
+		}
+		for _, leak := range []string{"EXAMPLE-TOKEN", "EXAMPLE-BODY", "open-apis"} {
+			if strings.Contains(err.Error(), leak) {
+				t.Errorf("报错里不该有 %q：%v", leak, err)
+			}
+		}
+		if !strings.Contains(err.Error(), ".example.com") {
+			t.Errorf("报错里要留主机名，不然不知道是哪个通道坏了：%v", err)
+		}
+	}
+}
+
+type failingTransport struct{}
+
+func (failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("dial tcp: no such host")
 }
