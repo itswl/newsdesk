@@ -1,0 +1,25 @@
+name: govulncheck
+
+# 每周一拿 Go 官方漏洞库扫 go/ 模块；有命中就红，Action 会给邮箱发信。
+on:
+  schedule:
+    - cron: "37 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: go
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go/go.mod
+      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
+      - run: "$(go env GOPATH)/bin/govulncheck ./..."

@@ -1,0 +1,17 @@
+name: dependency review
+
+# 每个 PR 自动比对依赖变化带来的安全公告与许可证变化。公开仓库免费，
+# 读的就是 PR 自带的依赖图。
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/dependency-review-action@v4
