@@ -35,6 +35,11 @@ var shapes = []struct {
 	{"GitHub token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`)},
 	{"Cloudflare token", regexp.MustCompile(`\bcf(?:ut|at|k)_[A-Za-z0-9_\-]{20,}\b`)},
 	{"AWS key id", regexp.MustCompile(`\bAKIA[0-9A-Z]{16}\b`)},
+	// 这条有意不加 ^ 锚点：检测要的是「行里任何位置出现」——令牌可以嵌在报告句子、
+	// markdown 链接中间，加了锚会漏检。CodeQL 的 missing-regexp-anchor 针对的是
+	// 「拿正则清洗/校验 URL」的场景（不锚定会被前缀绕过），这里是反过来找命中，
+	// 超集匹配正是安全方向（宁可误报拦下发布，不可漏放）。
+	// codeql[go/regex/missing-regexp-anchor]
 	{"Slack/飞书 webhook", regexp.MustCompile(`https://(?:hooks\.slack\.com|open\.(?:feishu|larksuite)\.com)/\S{20,}`)},
 	{"私钥块", regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----`)},
 }

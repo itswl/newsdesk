@@ -29,8 +29,14 @@ function leave(){
   requestAnimationFrame(function(){requestAnimationFrame(function(){d.classList.remove('leaving-wait')})});
 }
 function navTo(href){
+  // 跳转白名单：目标只该是站内 .html 页（daysel 的 option、前后日链接，都由
+  // 服务端生成）。这层把关把「万一有外站或 javascript: 这类伪协议混进导航目标」
+  // 关死——赋给 location.href 的伪协议是会执行的。解析失败、跨源、非 .html 一律不跳。
+  var u;
+  try{u=new URL(href,location.href)}catch(e){return}
+  if(u.origin!==location.origin||!/\.html$/.test(u.pathname))return;
   leave();
-  requestAnimationFrame(function(){requestAnimationFrame(function(){location.href=href})});
+  requestAnimationFrame(function(){requestAnimationFrame(function(){location.href=u.href})});
 }
 var sel=document.getElementById('daysel');
 if(sel) sel.onchange=function(){
